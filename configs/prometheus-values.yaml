@@ -30,7 +30,7 @@ prometheus:
 
 grafana:
   # Default admin password. Change in production; fine for research.
-  adminPassword: "prom-operator"
+  adminPassword: ""
 
   resources:
     requests:
