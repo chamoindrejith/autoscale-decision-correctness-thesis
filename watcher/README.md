@@ -1,26 +1,35 @@
-# HPA Watcher
+# HPA Decision Watcher
 
-Watches HPA resources in `autoscale-research` namespace and records every
-scaling decision as a JSONL event. This is the instrument that provides
-`T_decision` for your SRD formula.
+A Python service that watches Horizontal Pod Autoscaler resources in the
+`autoscale-research` namespace and records every scaling decision as a JSONL
+event on a persistent volume. This is the instrument that provides
+`T_decision` for the SRD computation.
 
-## Build & deploy
+## Build and Deploy
+
+Run on the droplet, from this directory:
 
 ```bash
-# On the Droplet, from this folder:
 docker build -t hpa-watcher:v1 .
 docker save hpa-watcher:v1 | sudo k3s ctr images import -
 kubectl apply -f watcher-deployment.yaml
-
-# Watch the live stream of decisions
-kubectl logs -n autoscale-research -l app=hpa-watcher -f
-
-# Retrieve the JSONL file from the pod after a run
-POD=$(kubectl get pod -n autoscale-research -l app=hpa-watcher -o name | head -1)
-kubectl cp -n autoscale-research "${POD#pod/}:/data/hpa-events.jsonl" ./hpa-events.jsonl
 ```
 
-## Event format
+Tail the live stream of decisions:
+
+```bash
+kubectl logs -n autoscale-research -l app=hpa-watcher -f
+```
+
+Retrieve the JSONL file from the pod after a campaign:
+
+```bash
+POD=$(kubectl get pod -n autoscale-research -l app=hpa-watcher -o name | head -1)
+kubectl cp -n autoscale-research "${POD#pod/}:/data/hpa-events.jsonl" \
+  ./hpa-events.jsonl
+```
+
+## Event Format
 
 ```json
 {
@@ -40,5 +49,6 @@ kubectl cp -n autoscale-research "${POD#pod/}:/data/hpa-events.jsonl" ./hpa-even
 }
 ```
 
-Use `detected_at` as `T_decision`. Pair with Prometheus latency data
-(`response_time_seconds` quantiles) to compute SRD and SES.
+The `detected_at` field provides `T_decision` for SRD computation. Pairing
+with Prometheus latency data (`response_time_seconds` quantiles) yields both
+SRD and SES values per decision.

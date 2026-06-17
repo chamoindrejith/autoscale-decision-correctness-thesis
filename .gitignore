@@ -1,7 +1,7 @@
 # =========================================================================
 # Thesis writing artefacts — never enter the repo.
-# Word documents, the proposal PDF, the literature notes, and the
-# correspondence drafts all stay local only.
+# Word documents, the proposal PDF, the literature notes, the long-form
+# setup/hardening guides, and the correspondence drafts all stay local only.
 # =========================================================================
 *.docx
 ~$*.docx
@@ -13,6 +13,11 @@ IT4216_Progress_Report*.pdf
 related_papers.md
 Evaluating Autoscaling Decision Correctness Using Observability Data in Kubernetes.pdf
 fill_progress_report.py
+
+# Long-form setup/hardening notes — content lives in the README and per-folder
+# READMEs in the canonical, professional voice.
+SETUP_GUIDE.md
+HARDENING_GUIDE.md
 
 # Personal correspondence drafts
 supervisor-*.md

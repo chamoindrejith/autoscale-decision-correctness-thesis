@@ -2,9 +2,9 @@
 
 Experimental framework for a final-year research project evaluating the
 correctness of Kubernetes Horizontal Pod Autoscaler (HPA) decisions using
-observability-driven outcome-oriented metrics. Compares HPA behavior across
-four distinct workload patterns to characterise reaction-time and
-effectiveness, and produces a per-decision correctness dataset for further
+observability-driven outcome-oriented metrics. The framework compares HPA
+behavior across four distinct workload patterns to characterise reaction-time
+and effectiveness, producing a per-decision correctness dataset for further
 analysis.
 
 ## Research Question
@@ -39,10 +39,10 @@ a total campaign of **80 runs** and approximately **495 HPA decisions**.
 
 ## Correctness Metrics
 
-| Metric                            | Formula                                                  | Question it answers          |
-| --------------------------------- | -------------------------------------------------------- | ---------------------------- |
-| **SRD** (Scale Reaction Delay)    | `T_decision − T_SLO_risk`                                | Was the decision timely?     |
-| **SES** (Scale Effectiveness Score) | `(Latency_before − Latency_after) / Latency_before`    | Did the decision help?       |
+| Metric                              | Formula                                                  | Question it answers          |
+| ----------------------------------- | -------------------------------------------------------- | ---------------------------- |
+| **SRD** (Scale Reaction Delay)      | `T_decision − T_SLO_risk`                                | Was the decision timely?     |
+| **SES** (Scale Effectiveness Score) | `(Latency_before − Latency_after) / Latency_before`      | Did the decision help?       |
 
 Each decision is also placed in one of four correctness buckets:
 
@@ -53,7 +53,7 @@ Each decision is also placed in one of four correctness buckets:
 | Unnecessary         | (varies)     | (low — no improvement to make)     |
 | Ineffective         | (varies)     | Low (blocked by maxReplicas, etc.) |
 
-The operational thresholds are documented in `analysis/classification_rules.pdf`.
+Operational thresholds are documented in `analysis/classification_rules.pdf`.
 
 ## Repository Structure
 
@@ -79,10 +79,10 @@ The operational thresholds are documented in `analysis/classification_rules.pdf`
 │   ├── burst-load.js
 │   ├── ramp-load.js
 │   ├── noisy-load.js
-│   └── calib-probe.js        # stepped-VU calibration probe
+│   └── calib-probe.js
 ├── scripts/                  # Campaign orchestration
 │   └── run-campaign.sh
-├── analysis/                 # Per-decision data pipeline + plotting
+├── analysis/                 # Per-decision data pipeline and plotting
 │   ├── build_master_dataset.py
 │   ├── classify_decisions.py
 │   ├── compute_ses.py
@@ -92,52 +92,51 @@ The operational thresholds are documented in `analysis/classification_rules.pdf`
 │   ├── plot_decision_latency.py
 │   ├── plot_all_decisions.py
 │   └── classification_rules.pdf
-└── data/                     # Pointer to raw datasets + outputs on Drive
+└── data/                     # Pointer to raw datasets and outputs on Drive
     └── README.md
-
-# Note: results/ is created at runtime by the analysis pipeline and is
-# gitignored. Pipeline outputs (CSVs, plots) and raw k6 data live on
-# Google Drive — see data/README.md.
 ```
+
+The `results/` directory is created at runtime by the analysis pipeline and
+is excluded from version control. Raw experimental data and generated
+outputs are hosted on Google Drive — see `data/README.md`.
 
 ## Infrastructure
 
 - **Platform:** DigitalOcean droplet (Ubuntu 24.04)
 - **Kubernetes:** k3s single-node cluster (2 vCPU / 4 GiB)
 - **Sample app:** Ballerina HTTP service exposing a CPU-bound `/api/compute`
-  endpoint (`n` controls CPU work per request)
+  endpoint; `n` controls CPU work per request
 - **Observability:** kube-prometheus-stack (Prometheus + Grafana)
-- **Custom instrumentation:** Python HPA decision watcher (one of the
-  contributions of this study) that captures every HPA scaling decision
-  with millisecond-precision timestamps and the CPU value observed at
-  decision time, writing to a persistent volume as JSONL
-- **Load generation:** k6 v2.0 driven from a developer Mac over SSH
+- **Custom instrumentation:** Python HPA decision watcher (a contribution of
+  this study) capturing every HPA scaling decision with millisecond-precision
+  timestamps and the CPU value observed at decision time, writing to a
+  persistent volume as JSONL
+- **Load generation:** k6 v2.0 driven over SSH from a developer workstation
 
-The HPA is configured for `target = 30% CPU`, `minReplicas = 2`,
-`maxReplicas = 6`. The k6 endpoint parameter is calibrated to
-`n = 50,000` (≈ 29 ms CPU per request) so CPU scales linearly with
-virtual-user count and HPA decisions remain observable.
+HPA configuration: `target = 30% CPU`, `minReplicas = 2`, `maxReplicas = 6`.
+The k6 endpoint parameter is calibrated to `n = 50,000` (≈ 29 ms CPU per
+request) so CPU scales linearly with virtual-user count and HPA decisions
+remain observable.
 
 ---
 
 # Running the Experiment
 
-Steps 1–7 are one-time setup; steps 8–11 are the experiment itself.
-All commands assume you are running them from the repository root, with
-`kubectl` configured for the experimental cluster, unless stated otherwise.
+Steps 1–7 are one-time setup; steps 8–12 are the experiment itself.
+All commands assume execution from the repository root with `kubectl`
+configured for the experimental cluster, unless stated otherwise.
 
 ## 1. Provision the droplet and install k3s
 
-Follow the steps in `droplet/create-droplet.md` to create the droplet.
-Then on the droplet:
+Follow `droplet/create-droplet.md` to create the droplet. Then on the droplet:
 
 ```bash
 sudo ./droplet/install-k3s.sh
 sudo ./droplet/install-ballerina.sh
 ```
 
-Apply the cluster hardening steps from `HARDENING_GUIDE.md` (UFW firewall,
-fail2ban, SSH key-only access, scoped passwordless sudo for reboot).
+Cluster hardening (UFW firewall, fail2ban, SSH key-only access, scoped
+passwordless sudo for reboot) is applied separately following site policy.
 
 ## 2. Deploy the sample app, HPA, and namespace
 
@@ -170,7 +169,7 @@ kubectl apply -f watcher/watcher-deployment.yaml
 ```
 
 The watcher writes events to `/data/hpa-events.jsonl` on a persistent volume.
-Verify it is logging:
+Verify decisions are being logged:
 
 ```bash
 kubectl logs -n autoscale-research -l app=hpa-watcher -f
@@ -178,8 +177,8 @@ kubectl logs -n autoscale-research -l app=hpa-watcher -f
 
 ## 5. Calibrate the workload parameter
 
-Run the calibration probe to confirm `n = 50,000` gives the desired linear
-CPU response on your hardware:
+Run the calibration probe to confirm `n = 50,000` produces a linear CPU
+response on the target hardware:
 
 ```bash
 k6 run --out json=results/calib.json \
@@ -187,14 +186,13 @@ k6 run --out json=results/calib.json \
   workloads/calib-probe.js
 ```
 
-If your cluster differs from a 2-vCPU / 4 GiB droplet, adjust `n` in each
-load script so CPU scales linearly with VU count and HPA decisions emerge
-between idle and saturation.
+For different hardware, adjust `n` in each load script so CPU scales linearly
+with VU count and HPA decisions emerge between idle and saturation.
 
 ## 6. Run an attended smoke workload
 
-Verify the full pipeline (k6 → cluster → HPA → watcher → data) by running
-one Step workload attended:
+Verify the full pipeline (k6 → cluster → HPA → watcher → data) with one
+attended Step workload:
 
 ```bash
 TS=$(date +%Y%m%d-%H%M%S)
@@ -222,8 +220,7 @@ unattended, with health checks, idle waits, and droplet reboots between runs.
 ./scripts/run-campaign.sh noisy 1 20
 ```
 
-Each pattern batch is ~5–6 hours. Run inside `tmux`/`screen`, or prepend
-`caffeinate -i` on macOS to prevent local sleep.
+Each batch takes approximately 5–6 hours. Run inside `tmux` or `screen`.
 
 ## 8. Pull the watcher JSONL
 
@@ -240,8 +237,8 @@ kubectl cp autoscale-research/$WATCHER_POD:/data/hpa-events.jsonl \
 python3 analysis/build_master_dataset.py
 ```
 
-This reads `results/hpa-events-full.jsonl` and the k6 JSON files, tags each
-HPA decision with the run it belongs to, and writes `results/master_decisions.csv`
+Reads `results/hpa-events-full.jsonl` and the k6 JSON files, tags each HPA
+decision with its containing run, and writes `results/master_decisions.csv`
 plus `results/run_index.csv`.
 
 ## 10. Apply the 4-bucket classification
@@ -284,22 +281,24 @@ PNGs are written into `results/plots/`.
 - Total runs: **80** (20 per pattern × 4 patterns)
 - HPA decisions captured: **495** (488 tagged to runs)
 - Workload campaign duration: **May 23 – June 8, 2026**
-- Per-request latency points: **~841,594** in the SES windows
+- Per-request latency points used in SES windows: **~841,594**
 
 ## Key Findings (in progress)
 
-- **Burst-pattern HPA reacts very late** — median CPU at first scale-up is
-  **109%** (vs. **38%** for Ramp), indicating substantial reaction-time lag.
-- **All scale-down decisions** across patterns classified as Correct & Timely,
-  consistent with the HPA's conservative scale-down stabilization design.
-- **Burst pattern hits `maxReplicas` cap on 42%** of its scale-up decisions
-  on a 2-vCPU node — captured as a Threats-to-Validity point.
+- The Burst pattern triggers the HPA at the highest CPU values — median CPU
+  at the first scale-up reaches **109%** of the target, versus **38%** for
+  the Ramp pattern, indicating substantial reaction-time lag for spike-like
+  workloads.
+- All scale-down decisions across patterns classify as Correct & Timely,
+  consistent with the HPA's conservative scale-down stabilisation behaviour.
+- The Burst pattern hits the `maxReplicas` cap on **42%** of its scale-up
+  decisions on a 2-vCPU node, recorded as a Threats-to-Validity finding.
 
 ## Large Raw Data
 
 The 80 raw k6 JSON outputs and the 91 MB `ses_input_dataset.csv` are not
-included in this repository due to size (~2 GB total). They are hosted on
-Google Drive — see `data/README.md` for the access link.
+included in this repository due to their size (~2 GB total). They are hosted
+on Google Drive — see `data/README.md` for the access link.
 
 ---
 
