@@ -1,0 +1,51 @@
+# Deployment = "keep N replicas of this pod alive, always".
+# The HPA modifies `spec.replicas` on this object to scale up/down.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autoscale-sample
+  namespace: autoscale-research
+  labels:
+    app: autoscale-sample
+spec:
+  replicas: 2                    # starting replicas; HPA will override this
+  selector:
+    matchLabels:
+      app: autoscale-sample
+  template:
+    metadata:
+      labels:
+        app: autoscale-sample
+    spec:
+      containers:
+        - name: app
+          image: autoscale-sample:v1
+          imagePullPolicy: Never         # use locally-imported image (no registry)
+          ports:
+            - name: http
+              containerPort: 9000
+            - name: metrics
+              containerPort: 9797
+          # --- Resource requests/limits ---
+          # The HPA computes CPU% as (actual CPU) / (requested CPU).
+          # Without a 'requests.cpu' entry, HPA metric will show <unknown>.
+          resources:
+            requests:
+              cpu: "200m"                # 0.2 cores
+              memory: "256Mi"
+            limits:
+              cpu: "500m"                # pod can burst up to 0.5 cores
+              memory: "512Mi"
+          # --- Probes ---
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 9000
+            initialDelaySeconds: 15
+            periodSeconds: 10

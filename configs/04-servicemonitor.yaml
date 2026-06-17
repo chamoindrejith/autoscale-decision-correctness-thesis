@@ -1,0 +1,26 @@
+# A ServiceMonitor is a custom resource from the Prometheus Operator that
+# tells Prometheus *what* to scrape. Without this, Prometheus won't know
+# about our app's /metrics endpoint.
+#
+# Apply this AFTER installing kube-prometheus-stack (see ../04-monitoring/).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: autoscale-sample
+  namespace: autoscale-research
+  labels:
+    # This label MUST match the serviceMonitorSelector of the Prometheus CR.
+    # The default kube-prometheus-stack install uses `release: kube-prometheus-stack`.
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - autoscale-research
+  selector:
+    matchLabels:
+      app: autoscale-sample
+  endpoints:
+    - port: metrics          # matches the 'metrics' port name in the Service
+      interval: 5s           # scrape every 5s — gives good resolution for SRD
+      path: /metrics
+      scheme: http

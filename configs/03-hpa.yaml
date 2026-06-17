@@ -1,0 +1,53 @@
+# HorizontalPodAutoscaler — the research subject.
+#
+# This is the thing you're measuring. It reads CPU% + memory% from the
+# metrics-server (which k3s includes by default), compares to thresholds,
+# and modifies the Deployment's replica count.
+#
+# ** averageUtilization = 50 ** is a starting value. Your research PDF says:
+#   "HPA values can be set from Idle Usage + 25%"
+# So once the app is deployed and idle, run:
+#   kubectl top pod -n autoscale-research
+# and note the average CPU%. If it's, say, 10%, update this file with:
+#   averageUtilization: 35
+# Re-apply with `kubectl apply -f 03-hpa.yaml`.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: autoscale-sample-hpa
+  namespace: autoscale-research
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: autoscale-sample
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50    # tune to idle + 25%
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+  # Behavior section gives us fine control over scale rate/stabilization.
+  # Default behavior: 15s scale-up, 5m scale-down stabilization.
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 15
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60

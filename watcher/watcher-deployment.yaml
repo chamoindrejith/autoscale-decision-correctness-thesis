@@ -1,0 +1,105 @@
+# Full RBAC + Deployment for the HPA watcher.
+#
+# RBAC (Role-Based Access Control) is how Kubernetes says "this identity may
+# do these actions". Our watcher needs to read HPA resources, so we:
+#   1. Create a ServiceAccount (an identity).
+#   2. Create a Role that lists allowed verbs on HPAs.
+#   3. Bind the Role to the ServiceAccount.
+#   4. Run the Deployment as that ServiceAccount.
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hpa-watcher
+  namespace: autoscale-research
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hpa-watcher
+  namespace: autoscale-research
+rules:
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hpa-watcher
+  namespace: autoscale-research
+subjects:
+  - kind: ServiceAccount
+    name: hpa-watcher
+    namespace: autoscale-research
+roleRef:
+  kind: Role
+  name: hpa-watcher
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# A tiny PersistentVolumeClaim so events survive pod restarts.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hpa-watcher-data
+  namespace: autoscale-research
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+  # k3s ships with a default StorageClass 'local-path'
+  storageClassName: local-path
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hpa-watcher
+  namespace: autoscale-research
+  labels:
+    app: hpa-watcher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hpa-watcher
+  strategy:
+    type: Recreate      # only 1 replica, rewrite same file
+  template:
+    metadata:
+      labels:
+        app: hpa-watcher
+    spec:
+      serviceAccountName: hpa-watcher
+      containers:
+        - name: watcher
+          image: hpa-watcher:v1
+          imagePullPolicy: Never         # locally imported into k3s
+          env:
+            - name: WATCH_NAMESPACE
+              value: autoscale-research
+            - name: OUTPUT_PATH
+              value: /data/hpa-events.jsonl
+            - name: LOG_TO_STDOUT
+              value: "true"
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: hpa-watcher-data

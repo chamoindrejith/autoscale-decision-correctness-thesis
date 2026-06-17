@@ -1,0 +1,66 @@
+# =========================================================================
+# Thesis writing artefacts — never enter the repo.
+# Word documents, the proposal PDF, the literature notes, and the
+# correspondence drafts all stay local only.
+# =========================================================================
+*.docx
+~$*.docx
+~$*.xlsx
+~$*.pptx
+Chapter*.docx
+IT4216_Progress_Report*.docx
+IT4216_Progress_Report*.pdf
+related_papers.md
+Evaluating Autoscaling Decision Correctness Using Observability Data in Kubernetes.pdf
+fill_progress_report.py
+
+# Personal correspondence drafts
+supervisor-*.md
+supervisor_*.md
+suvin_*.md
+post-*.md
+
+# =========================================================================
+# Generated output — never tracked in the repo.
+# The results/ folder is produced at runtime by the analysis pipeline.
+# Raw datasets and aggregated outputs are hosted on Google Drive instead
+# (see data/README.md for the access link).
+# =========================================================================
+results/
+
+# Local execution logs (the orchestrator writes here at runtime)
+logs/
+
+# =========================================================================
+# Python / build artefacts
+# =========================================================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.venv/
+venv/
+env/
+
+# =========================================================================
+# OS / editor cruft
+# =========================================================================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================================================================
+# Secrets — never commit
+# =========================================================================
+*.pem
+*.key
+id_ed25519*
+id_rsa*
+.env
+.env.local
+secrets/

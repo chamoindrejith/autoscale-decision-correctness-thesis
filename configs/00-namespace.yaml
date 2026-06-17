@@ -1,0 +1,9 @@
+# A Kubernetes "namespace" is a soft partition — a folder-like boundary for
+# resources. Keeping our research artifacts in their own namespace means we
+# can `kubectl delete ns autoscale-research` to wipe the whole experiment.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: autoscale-research
+  labels:
+    purpose: hpa-correctness-research

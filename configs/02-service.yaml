@@ -1,0 +1,23 @@
+# A Service gives the pods a stable virtual IP inside the cluster AND
+# (because we use NodePort) a port on the Droplet host itself: <DROPLET_IP>:30080.
+# That's how load tests from your laptop reach the app.
+apiVersion: v1
+kind: Service
+metadata:
+  name: autoscale-sample
+  namespace: autoscale-research
+  labels:
+    app: autoscale-sample
+spec:
+  type: NodePort
+  selector:
+    app: autoscale-sample
+  ports:
+    - name: http
+      port: 9000
+      targetPort: 9000
+      nodePort: 30080         # reach the app at <DROPLET_IP>:30080
+    - name: metrics
+      port: 9797
+      targetPort: 9797
+      nodePort: 30979         # optional: direct access to /metrics for debugging

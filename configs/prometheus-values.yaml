@@ -1,0 +1,68 @@
+# Helm values for kube-prometheus-stack.
+# Tuned for a small (4 GB RAM) single-node k3s Droplet.
+
+prometheus:
+  prometheusSpec:
+    # How long to keep scraped data. More = more disk. 3d is enough for
+    # analyzing one day of experiments.
+    retention: 3d
+
+    # Resource budget. On a 4GB droplet we don't want Prometheus hogging
+    # memory; 1Gi limit is plenty for a handful of targets and short retention.
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1Gi"
+
+    # Use a simple emptyDir (data lost on pod restart). Fine for research.
+    # For persistence, set storageSpec with a PVC claim.
+    storageSpec: {}
+
+    # IMPORTANT: this selector tells Prometheus which ServiceMonitors to pick
+    # up. Empty selector = all of them, in all namespaces. Matches our
+    # ServiceMonitor label `release: kube-prometheus-stack`.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+grafana:
+  # Default admin password. Change in production; fine for research.
+  adminPassword: "prom-operator"
+
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "300m"
+      memory: "256Mi"
+
+  # Grafana loads a ton of default dashboards. Keep them — they're useful.
+  defaultDashboardsEnabled: true
+
+alertmanager:
+  # We don't need alerts for this experiment; disable to save RAM.
+  enabled: false
+
+# These are cluster-wide exporters included with kube-prometheus-stack.
+# Keep them — they give us node CPU/memory metrics and k8s object metrics.
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: "20m"
+      memory: "64Mi"
+    limits:
+      cpu: "100m"
+      memory: "128Mi"
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: "20m"
+      memory: "32Mi"
+    limits:
+      cpu: "100m"
+      memory: "64Mi"
