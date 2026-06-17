@@ -14,8 +14,8 @@
 // Lighter per-request cost than the patterns: n=50000 (~29ms CPU each) instead
 // of the default 500000. Override with -e N=... if you want.
 //
-// Run (from your Mac):
-//   k6 run -e TARGET_URL="http://206.189.133.70:30080/api/compute" calib-probe.js
+// Run (from your device):
+//   k6 run -e TARGET_URL="" calib-probe.js
 //
 // (n is appended automatically; you can override with -e N=30000 etc.)
 
