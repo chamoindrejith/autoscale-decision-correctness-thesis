@@ -276,37 +276,9 @@ PNGs are written into `results/plots/`.
 
 ---
 
-## Dataset Summary
-
-- Total runs: **80** (20 per pattern × 4 patterns)
-- HPA decisions captured: **495** (488 tagged to runs)
-- Workload campaign duration: **May 23 – June 8, 2026**
-- Per-request latency points used in SES windows: **~841,594**
-
-## Key Findings (in progress)
-
-- The Burst pattern triggers the HPA at the highest CPU values — median CPU
-  at the first scale-up reaches **109%** of the target, versus **38%** for
-  the Ramp pattern, indicating substantial reaction-time lag for spike-like
-  workloads.
-- All scale-down decisions across patterns classify as Correct & Timely,
-  consistent with the HPA's conservative scale-down stabilisation behaviour.
-- The Burst pattern hits the `maxReplicas` cap on **42%** of its scale-up
-  decisions on a 2-vCPU node, recorded as a Threats-to-Validity finding.
-
-## Large Raw Data
-
-The 80 raw k6 JSON outputs and the 91 MB `ses_input_dataset.csv` are not
-included in this repository due to their size (~2 GB total). They are hosted
-on Google Drive — see `data/README.md` for the access link.
-
----
-
 ## Project Information
 
 - **Student:** S.A.C.S. Indrejith (2020/ICT/65)
 - **Supervisor:** Ms. R. Yasotha
 - **Co-Supervisor:** Mr. Suvin Kodituwakku
-- **Institution:** University of Vavuniya — Department of Physical Science
-- **Module:** IT4216 Research Project (2026)
-- **Final submission target:** 30 June 2026
+- **University:** University of Vavuniya — Department of Physical Science
