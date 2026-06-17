@@ -4,16 +4,6 @@ The `results/` directory in this repository is created at runtime by the
 analysis pipeline and is excluded from version control. All datasets — raw
 inputs and pipeline outputs — are hosted externally on Google Drive.
 
-## Access
-
-**Google Drive folder:** _(share link to be added once the folder is created)_
-
-Read-only access shared with:
-- Ms. R. Yasotha (Supervisor)
-- Mr. Suvin Kodituwakku (Co-Supervisor)
-
-## Drive Folder Contents
-
 ### Raw experimental data (inputs)
 
 | File family               | Description                                                       | Approx size  |
@@ -48,10 +38,3 @@ Read-only access shared with:
 3. Run the analysis pipeline as documented in the top-level README, sections 9–12.
 4. The pipeline regenerates every file listed under "Generated pipeline outputs"
    into `results/` (and `results/plots/`).
-
-## Excluded Runs
-
-Two Noisy runs (June 4 evening attempts) and two Ramp runs (#11 degraded,
-#15 degraded) are included in the dataset but flagged. No runs are excluded
-from the primary analysis; flagged runs are retained and discussed under
-Threats to Validity in the dissertation write-up.
