@@ -23,9 +23,9 @@ set -euo pipefail
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
-SSH_HOST="droplet"                                # SSH alias from ~/.ssh/config
-NAMESPACE="autoscale-research"
-TARGET_URL="http://206.189.133.70:30080/api/compute"
+SSH_HOST=""                                # SSH alias from ~/.ssh/config
+NAMESPACE=""
+TARGET_URL=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESULTS_DIR="${SCRIPT_DIR}/results"
 LOGS_DIR="${SCRIPT_DIR}/logs"
