@@ -1,0 +1,15 @@
+# Runtime configuration for the Ballerina app.
+# This file is read at startup.
+
+# ---------------------------------------------------------------------------
+# App-level config
+# ---------------------------------------------------------------------------
+[research.autoscale_test]
+# Default "work size" per request when caller doesn't specify iterations.
+# Tune so a single request takes ~30-80ms of CPU on your Droplet.
+defaultIterations = 500000
+
+# ---------------------------------------------------------------------------
+# NOTE: Native Prometheus reporter config was removed in this version.
+# For now we derive latency from the "time-taken" audit logs in service.bal.
+# ---------------------------------------------------------------------------

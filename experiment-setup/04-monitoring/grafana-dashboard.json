@@ -1,0 +1,87 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "name": "HPA scale events",
+        "datasource": "Prometheus",
+        "enable": true,
+        "expr": "changes(kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"autoscale-research\"}[1m]) > 0",
+        "iconColor": "rgba(255, 96, 96, 1)",
+        "titleFormat": "HPA scale event"
+      }
+    ]
+  },
+  "description": "HPA correctness research dashboard. Shows the four quantities you need: request latency, replica count, CPU%, error rate.",
+  "editable": true,
+  "panels": [
+    {
+      "title": "Replicas (current vs desired)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=\"autoscale-research\"}",
+          "legendFormat": "current"
+        },
+        {
+          "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"autoscale-research\"}",
+          "legendFormat": "desired"
+        }
+      ]
+    },
+    {
+      "title": "CPU utilization vs target",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"autoscale-research\",container=\"app\"}[1m])) / sum(kube_pod_container_resource_requests{namespace=\"autoscale-research\",resource=\"cpu\"}) * 100",
+          "legendFormat": "CPU %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "percent"}
+      }
+    },
+    {
+      "title": "Request latency (Ballerina metrics)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(response_time_seconds_bucket{namespace=\"autoscale-research\"}[1m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(response_time_seconds_bucket{namespace=\"autoscale-research\"}[1m])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(response_time_seconds_bucket{namespace=\"autoscale-research\"}[1m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "s"}
+      }
+    },
+    {
+      "title": "Throughput (req/s)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(response_time_seconds_count{namespace=\"autoscale-research\"}[1m]))",
+          "legendFormat": "req/s"
+        }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "tags": ["hpa", "research"],
+  "time": {"from": "now-15m", "to": "now"},
+  "title": "HPA Correctness Research",
+  "uid": "hpa-research",
+  "version": 1
+}

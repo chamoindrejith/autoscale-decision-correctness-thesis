@@ -1,0 +1,10 @@
+[package]
+org = "research"
+name = "autoscale_test"
+version = "0.1.0"
+distribution = "2201.10.0"
+
+[build-options]
+# observabilityIncluded = true bakes the Prometheus metrics reporter into
+# the produced JAR so we get latency/throughput metrics out of the box.
+observabilityIncluded = true
