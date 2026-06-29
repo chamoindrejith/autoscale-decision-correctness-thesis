@@ -28,14 +28,18 @@ spec:
               containerPort: 9797
           # --- Resource requests/limits ---
           # The HPA computes CPU% as (actual CPU) / (requested CPU).
-          # Without a 'requests.cpu' entry, HPA metric will show <unknown>.
+          # requests == limits intentionally: when they are equal, the
+          # HPA's reported CPU% is bounded to 0–100% and reflects true
+          # capacity utilisation. Decoupling requests from limits would
+          # let pods burst beyond their request, producing CPU readings
+          # above 100% that conflate pod-level bursting with HPA's view.
           resources:
             requests:
-              cpu: "200m"                # 0.2 cores
+              cpu: "200m"
               memory: "256Mi"
             limits:
-              cpu: "500m"                # pod can burst up to 0.5 cores
-              memory: "512Mi"
+              cpu: "200m"
+              memory: "256Mi"
           # --- Probes ---
           readinessProbe:
             httpGet:
