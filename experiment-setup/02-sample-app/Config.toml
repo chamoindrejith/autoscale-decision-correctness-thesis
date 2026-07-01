@@ -13,18 +13,16 @@ defaultIterations = 500000
 # Ballerina observability — enables the built-in Prometheus reporter.
 # Together with `observabilityIncluded = true` in Ballerina.toml (which
 # compiles the reporter into the JAR), these settings cause the JAR to
-# start an HTTP server on the configured port serving /metrics in
-# Prometheus text-exposition format.
+# start an HTTP server serving /metrics in Prometheus text-exposition
+# format. The reporter defaults to port 9797 on 0.0.0.0, which matches
+# the `metrics` port exposed in 03-kubernetes-manifests/02-service.yaml
+# and scraped by 04-servicemonitor.yaml.
 #
-# Metrics are consumed by the kube-prometheus-stack Prometheus, discovered
-# via the ServiceMonitor at experiment-setup/03-kubernetes-manifests/
-# 04-servicemonitor.yaml, and visualised in the "Request latency" and
-# "Throughput" panels of the Grafana dashboard.
+# Note: earlier attempts to specify [ballerinaobsprometheus] port/host
+# caused the app to crash-loop on Ballerina 2201.10 with "unused
+# configuration value" errors. That section name is not valid in this
+# Ballerina distribution — the reporter binds to the defaults instead.
 # ---------------------------------------------------------------------------
 [ballerina.observe]
 metricsEnabled = true
 metricsReporter = "prometheus"
-
-[ballerinaobsprometheus]
-port = 9797
-host = "0.0.0.0"
