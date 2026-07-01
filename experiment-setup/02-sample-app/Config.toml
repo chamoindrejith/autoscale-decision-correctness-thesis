@@ -24,5 +24,6 @@ defaultIterations = 500000
 # Ballerina distribution — the reporter binds to the defaults instead.
 # ---------------------------------------------------------------------------
 [ballerina.observe]
+enabled = true
 metricsEnabled = true
 metricsReporter = "prometheus"
