@@ -10,6 +10,21 @@
 defaultIterations = 500000
 
 # ---------------------------------------------------------------------------
-# NOTE: Native Prometheus reporter config was removed in this version.
-# For now we derive latency from the "time-taken" audit logs in service.bal.
+# Ballerina observability — enables the built-in Prometheus reporter.
+# Together with `observabilityIncluded = true` in Ballerina.toml (which
+# compiles the reporter into the JAR), these settings cause the JAR to
+# start an HTTP server on the configured port serving /metrics in
+# Prometheus text-exposition format.
+#
+# Metrics are consumed by the kube-prometheus-stack Prometheus, discovered
+# via the ServiceMonitor at experiment-setup/03-kubernetes-manifests/
+# 04-servicemonitor.yaml, and visualised in the "Request latency" and
+# "Throughput" panels of the Grafana dashboard.
 # ---------------------------------------------------------------------------
+[ballerina.observe]
+metricsEnabled = true
+metricsReporter = "prometheus"
+
+[ballerinaobsprometheus]
+port = 9797
+host = "0.0.0.0"
