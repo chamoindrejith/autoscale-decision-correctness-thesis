@@ -10,20 +10,27 @@
 defaultIterations = 500000
 
 # ---------------------------------------------------------------------------
-# Ballerina observability — enables the built-in Prometheus reporter.
-# Together with `observabilityIncluded = true` in Ballerina.toml (which
-# compiles the reporter into the JAR), these settings cause the JAR to
-# start an HTTP server serving /metrics in Prometheus text-exposition
-# format. The reporter defaults to port 9797 on 0.0.0.0, which matches
-# the `metrics` port exposed in 03-kubernetes-manifests/02-service.yaml
-# and scraped by 04-servicemonitor.yaml.
-#
-# Note: earlier attempts to specify [ballerinaobsprometheus] port/host
-# caused the app to crash-loop on Ballerina 2201.10 with "unused
-# configuration value" errors. That section name is not valid in this
-# Ballerina distribution — the reporter binds to the defaults instead.
+# Ballerina observability
 # ---------------------------------------------------------------------------
-[ballerina.observe]
-enabled = true
-metricsEnabled = true
-metricsReporter = "prometheus"
+# STATUS: Prometheus scraping of the Ballerina app was ATTEMPTED but not
+# deployed in the campaign. Multiple Config.toml syntaxes were tried on
+# Ballerina 2201.10:
+#
+#   * [ballerinaobsprometheus] port=... host=...      → crash-loops
+#     (unused configuration value)
+#   * [ballerina.observe] metricsEnabled=true         → accepted, but
+#         metricsReporter="prometheus"                    reporter never
+#                                                        starts (only port
+#                                                        9000 listens)
+#   * adding enabled=true to the block                → crash-loops
+#
+# The correct TOML section names for this Ballerina release are not
+# documented consistently across Ballerina versions. Since the primary
+# latency source for the SES / SRD analysis is k6's http_req_duration
+# (a well-established client-side measurement), server-side Ballerina
+# metrics were dropped from scope for the campaign.
+#
+# The "Request latency" and "Throughput" panels of the Grafana dashboard
+# therefore stay empty during runs; k6 JSON outputs (in results/) carry
+# all the latency data the analysis pipeline needs.
+# ---------------------------------------------------------------------------
