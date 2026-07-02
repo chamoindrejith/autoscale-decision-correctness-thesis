@@ -77,7 +77,7 @@ data:
           }
         },
         {
-          "title": "Request latency (k6 client-side, ms)",
+          "title": "Request latency (k6 client-side)",
           "type": "timeseries",
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
           "targets": [
@@ -99,7 +99,7 @@ data:
             }
           ],
           "fieldConfig": {
-            "defaults": {"unit": "ms"}
+            "defaults": {"unit": "s"}
           }
         },
         {
