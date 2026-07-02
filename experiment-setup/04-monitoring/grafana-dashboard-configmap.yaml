@@ -1,0 +1,120 @@
+# Grafana Dashboard as a ConfigMap
+# ================================
+# kube-prometheus-stack ships a "dashboard sidecar" container inside the
+# Grafana pod that watches for ConfigMaps carrying the label
+# `grafana_dashboard: "1"`. Any matching ConfigMap whose data contains
+# a JSON dashboard is auto-loaded into Grafana at pod startup and every
+# ~15 seconds thereafter. This makes the dashboard part of the cluster
+# state (durable across Grafana pod restarts), and installable in one
+# command:
+#
+#     kubectl apply -f grafana-dashboard-configmap.yaml
+#
+# Note: this file is the authoritative install artifact. If you need to
+# edit the dashboard, edit `grafana-dashboard.json` first, then regenerate
+# this ConfigMap with:
+#
+#     kubectl create configmap grafana-dashboard-hpa-research \
+#       --from-file=hpa-research.json=grafana-dashboard.json \
+#       -n monitoring \
+#       --dry-run=client -o yaml > grafana-dashboard-configmap.yaml
+#
+#   (then re-add the labels below by hand)
+#
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-hpa-research
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    app: autoscale-research
+data:
+  hpa-research.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "name": "HPA scale events",
+            "datasource": "Prometheus",
+            "enable": true,
+            "expr": "changes(kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"autoscale-research\"}[1m]) > 0",
+            "iconColor": "rgba(255, 96, 96, 1)",
+            "titleFormat": "HPA scale event"
+          }
+        ]
+      },
+      "description": "HPA correctness research dashboard. Shows the four quantities you need: request latency, replica count, CPU%, error rate.",
+      "editable": true,
+      "panels": [
+        {
+          "title": "Replicas (current vs desired)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+          "targets": [
+            {
+              "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=\"autoscale-research\"}",
+              "legendFormat": "current"
+            },
+            {
+              "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"autoscale-research\"}",
+              "legendFormat": "desired"
+            }
+          ]
+        },
+        {
+          "title": "CPU utilization vs target",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+          "targets": [
+            {
+              "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"autoscale-research\",container=\"app\"}[1m])) / sum(kube_pod_container_resource_requests{namespace=\"autoscale-research\",resource=\"cpu\"}) * 100",
+              "legendFormat": "CPU %"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {"unit": "percent"}
+          }
+        },
+        {
+          "title": "Request latency (k6 client-side)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(k6_http_req_duration_seconds_bucket[1m])) by (le))",
+              "legendFormat": "p50"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(k6_http_req_duration_seconds_bucket[1m])) by (le))",
+              "legendFormat": "p95"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(k6_http_req_duration_seconds_bucket[1m])) by (le))",
+              "legendFormat": "p99"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {"unit": "s"}
+          }
+        },
+        {
+          "title": "Throughput (k6 req/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "targets": [
+            {
+              "expr": "sum(rate(k6_http_reqs_total[1m]))",
+              "legendFormat": "req/s"
+            }
+          ]
+        }
+      ],
+      "refresh": "5s",
+      "schemaVersion": 38,
+      "tags": ["hpa", "research"],
+      "time": {"from": "now-15m", "to": "now"},
+      "title": "HPA Correctness Research",
+      "uid": "hpa-research",
+      "version": 1
+    }
