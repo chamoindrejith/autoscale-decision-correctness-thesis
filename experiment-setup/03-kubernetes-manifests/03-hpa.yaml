@@ -1,15 +1,25 @@
 # HorizontalPodAutoscaler — the research subject.
 #
-# Matches the example in the research proposal:
-#   - CPU and memory targets set to 75% (the proposal's stated values)
-#   - minReplicas = 2, maxReplicas = 5
+# Post-pilot configuration for the 80-run campaign:
+#   - CPU and memory targets set to 75% (moderate sensitivity)
+#   - minReplicas = 2   (idle baseline)
+#   - maxReplicas = 10  (broad range so all 4 correctness buckets can be
+#                        observed: Correct, Correct-but-Late, Ineffective
+#                        via ceiling saturation, Unnecessary)
 #   - No `behavior:` block — HPA defaults apply (no custom stabilization
 #     window or per-step scaling policies)
 #
-# IMPORTANT: This configuration is fixed and unchanged throughout the
-# experiment, per the proposal's Internal Validity statement
-# ("Fixed HPA policy avoids tuning bias"). Do not patch the live HPA
-# during the campaign.
+# Sizing rationale:
+#   - Node has 4 vCPU allocatable = 4000m
+#   - System overhead (Prometheus, Grafana, k3s, watcher) ~ 700m
+#   - maxReplicas × 200m pod limit = 2000m at max
+#   - Total at max HPA: ~2700m of 4000m = 68% node CPU committed
+#   - Leaves comfortable headroom for OS + burst overhead
+#
+# IMPORTANT: This configuration is fixed once the campaign starts.
+# Do not patch the live HPA between runs — that would introduce a
+# tuning-bias confound and invalidate the correctness comparison across
+# workload patterns.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -21,7 +31,7 @@ spec:
     kind: Deployment
     name: autoscale-sample
   minReplicas: 2
-  maxReplicas: 5
+  maxReplicas: 10
   metrics:
     - type: Resource
       resource:
