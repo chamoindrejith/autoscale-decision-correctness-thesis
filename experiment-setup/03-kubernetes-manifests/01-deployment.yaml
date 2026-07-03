@@ -41,24 +41,27 @@ spec:
               cpu: "200m"
               memory: "256Mi"
           # --- Probes ---
+          # Both probes are DELIBERATELY LENIENT because the pod is
+          # deliberately CPU-saturated during bursts, and requests==limits
+          # means the pod has zero CPU headroom for health-endpoint
+          # responsiveness. The JIT calibration Run 1 showed that even
+          # timeoutSeconds:5 on liveness was insufficient — pods restarted
+          # mid-burst because /api/health couldn't respond fast enough while
+          # /api/compute pinned all 200m of CPU. Values below give each probe
+          # generous time and tolerate multiple consecutive failures.
           readinessProbe:
             httpGet:
               path: /api/health
               port: 9000
             initialDelaySeconds: 5
             periodSeconds: 3
-          # Liveness probe is intentionally lenient because the pod is
-          # deliberately CPU-saturated during bursts. The default 1-second
-          # timeout caused false-positive restarts during the burst pilot
-          # (both original pods restarted mid-burst), which would corrupt
-          # HPA correctness data by resetting CPU history and confusing
-          # replica tracking. Values below give the health endpoint 5s per
-          # check and require ~30s of missed checks before restart.
+            timeoutSeconds: 5
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /api/health
               port: 9000
             initialDelaySeconds: 15
             periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
+            timeoutSeconds: 10
+            failureThreshold: 6
