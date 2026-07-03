@@ -40,6 +40,7 @@ watcher survives pod restarts without dropping the first subsequent decision.
 import json
 import os
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -49,7 +50,17 @@ from kubernetes import client, config, watch
 NAMESPACE = os.environ.get("WATCH_NAMESPACE", "autoscale-research")
 OUTPUT_PATH = os.environ.get("OUTPUT_PATH", "/data/hpa-events.jsonl")
 STATE_PATH = os.environ.get("STATE_PATH", "/data/watcher-state.json")
+# Pod-ready dedup state — records (pod_name, transition_time_iso) tuples we
+# have already emitted, so restarts don't re-emit historical ready events.
+POD_STATE_PATH = os.environ.get("POD_STATE_PATH", "/data/watcher-pod-state.json")
+# Label selector for pods whose Ready transitions we care about. Restricted
+# to the sample app so we don't emit events for Prometheus, Grafana, etc.
+POD_LABEL_SELECTOR = os.environ.get("POD_LABEL_SELECTOR", "app=autoscale-sample")
 LOG_TO_STDOUT = os.environ.get("LOG_TO_STDOUT", "true").lower() == "true"
+
+# Serialise writes across HPA-watcher thread and Pod-watcher thread so JSONL
+# lines never interleave. Only used by write_event().
+_write_lock = threading.Lock()
 
 
 def iso_utc_now() -> str:
@@ -147,11 +158,124 @@ def save_state(last_desired: dict) -> None:
 
 
 def write_event(event: dict, out_file) -> None:
+    """Thread-safe JSONL write. Holds a module-level lock so the HPA and Pod
+    watcher threads never interleave partial lines in OUTPUT_PATH."""
     line = json.dumps(event, default=str)
-    out_file.write(line + "\n")
-    out_file.flush()
-    if LOG_TO_STDOUT:
-        print(line, flush=True)
+    with _write_lock:
+        out_file.write(line + "\n")
+        out_file.flush()
+        if LOG_TO_STDOUT:
+            print(line, flush=True)
+
+
+def load_pod_state() -> set:
+    """Load persisted set of already-emitted (pod_name@transition_time) keys."""
+    try:
+        with open(POD_STATE_PATH) as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return set(data)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    return set()
+
+
+def save_pod_state(seen: set) -> None:
+    """Atomically persist the pod dedup set so restarts don't re-emit historical
+    ready events."""
+    tmp = POD_STATE_PATH + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(list(seen), f)
+        os.replace(tmp, POD_STATE_PATH)
+    except OSError as e:
+        print(f"[watcher/pod] failed to save pod state: {e}", flush=True)
+
+
+def pod_watcher_loop(core_api, out_file, seen_pod_ready: set) -> None:
+    """Watch Pods in NAMESPACE and emit a `pod_ready` event whenever an
+    autoscale-sample pod's Ready condition transitions to True.
+
+    Rationale — see analysis/slo_risk_and_ses_methodology.md §3.5:
+      The SES `after` window must be anchored at T_pod_Ready (when the new
+      pod actually starts serving traffic), not at T_decision. Anchoring at
+      T_decision would sample latency while the new pod is still being
+      scheduled/started, systematically inflating Latency_after and
+      biasing correct decisions into the Ineffective bucket. This function
+      records the authoritative T_pod_Ready timestamp used by the analysis
+      pipeline (see analysis/build_ses_window_summary.py column
+      `t_pod_ready`).
+
+    Also emits `pod_deleted` events on Pod deletion so scale-down decisions
+    have an analogous timestamp for the SES after-window fallback anchor.
+
+    Dedup: a (pod_name, transition_time_iso) key is added to seen_pod_ready
+    the first time we emit a pod_ready event for that pod's transition.
+    Persisted to POD_STATE_PATH so watcher restarts do not re-emit
+    historical events.
+    """
+    while True:
+        try:
+            w = watch.Watch()
+            for raw in w.stream(
+                core_api.list_namespaced_pod,
+                namespace=NAMESPACE,
+                label_selector=POD_LABEL_SELECTOR,
+                timeout_seconds=0,
+            ):
+                pod = raw["object"]
+                event_type = raw["type"]
+
+                if event_type == "DELETED":
+                    write_event(
+                        {
+                            "event_type": "pod_deleted",
+                            "detected_at": iso_utc_now(),
+                            "namespace": NAMESPACE,
+                            "pod_name": pod.metadata.name,
+                            "app_label": (pod.metadata.labels or {}).get("app"),
+                        },
+                        out_file,
+                    )
+                    continue
+
+                if event_type not in ("ADDED", "MODIFIED"):
+                    continue
+                if not pod.status or not pod.status.conditions:
+                    continue
+
+                # Emit at most one pod_ready per (pod, transition_time).
+                for cond in pod.status.conditions:
+                    if cond.type != "Ready" or cond.status != "True":
+                        continue
+                    transition_iso = to_iso(cond.last_transition_time)
+                    if transition_iso is None:
+                        continue
+
+                    key = f"{pod.metadata.name}@{transition_iso}"
+                    if key in seen_pod_ready:
+                        break  # already recorded — nothing to do
+                    seen_pod_ready.add(key)
+                    save_pod_state(seen_pod_ready)
+
+                    write_event(
+                        {
+                            "event_type": "pod_ready",
+                            "detected_at": iso_utc_now(),
+                            "namespace": NAMESPACE,
+                            "pod_name": pod.metadata.name,
+                            "pod_created_at": to_iso(pod.metadata.creation_timestamp),
+                            # Authoritative T_pod_Ready — used by SES analysis.
+                            "pod_ready_at": transition_iso,
+                            "app_label": (pod.metadata.labels or {}).get("app"),
+                        },
+                        out_file,
+                    )
+                    break  # done with this Pod update
+
+        except Exception as e:
+            print(f"[watcher/pod] stream error: {e}. Retrying in 5s.", flush=True)
+            time.sleep(5)
 
 
 def main() -> None:
@@ -164,9 +288,11 @@ def main() -> None:
         print(f"[watcher] loaded local kubeconfig", flush=True)
 
     api = client.AutoscalingV2Api()
+    core_api = client.CoreV1Api()
 
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
     os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
+    os.makedirs(os.path.dirname(POD_STATE_PATH), exist_ok=True)
     out_file = open(OUTPUT_PATH, "a", buffering=1)  # line-buffered
 
     # Load persisted last-known desiredReplicas so the FIRST decision after a
@@ -176,6 +302,10 @@ def main() -> None:
     last_desired: dict = load_state()
     restored_keys = list(last_desired.keys())
 
+    # Load persisted pod-ready dedup set so a watcher restart doesn't re-emit
+    # events for pods that were already reported ready.
+    seen_pod_ready = load_pod_state()
+
     # Boot event so we can align log timestamps with clock skew, and so we
     # can later count restarts and audit the persisted-state restoration.
     write_event(
@@ -184,9 +314,23 @@ def main() -> None:
             "detected_at": iso_utc_now(),
             "namespace": NAMESPACE,
             "restored_state_keys": restored_keys,
+            "restored_pod_ready_count": len(seen_pod_ready),
+            # v3 adds T_pod_Ready capture — see analysis/slo_risk_and_ses_methodology.md
+            "watcher_version": "v3",
         },
         out_file,
     )
+
+    # Start the Pod watcher in a background thread. HPA watching stays on
+    # the main thread. Both write to `out_file` via the module-level
+    # _write_lock so JSONL lines never interleave.
+    pod_thread = threading.Thread(
+        target=pod_watcher_loop,
+        args=(core_api, out_file, seen_pod_ready),
+        daemon=True,
+        name="pod-watcher",
+    )
+    pod_thread.start()
 
     while True:
         try:

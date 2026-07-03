@@ -26,6 +26,12 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["get", "list", "watch"]
+  # v3: Pods watching added so we can record T_pod_Ready (see
+  # analysis/slo_risk_and_ses_methodology.md §3.5). Only read verbs — the
+  # watcher never modifies workloads.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -80,13 +86,19 @@ spec:
       serviceAccountName: hpa-watcher
       containers:
         - name: watcher
-          image: hpa-watcher:v1
+          image: hpa-watcher:v3
           imagePullPolicy: Never         # locally imported into k3s
           env:
             - name: WATCH_NAMESPACE
               value: autoscale-research
             - name: OUTPUT_PATH
               value: /data/hpa-events.jsonl
+            - name: STATE_PATH
+              value: /data/watcher-state.json
+            - name: POD_STATE_PATH
+              value: /data/watcher-pod-state.json
+            - name: POD_LABEL_SELECTOR
+              value: app=autoscale-sample
             - name: LOG_TO_STDOUT
               value: "true"
           resources:
