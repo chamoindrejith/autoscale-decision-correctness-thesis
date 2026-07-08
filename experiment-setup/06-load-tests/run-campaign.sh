@@ -23,16 +23,29 @@ set -euo pipefail
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
-SSH_HOST=""                                # SSH alias from ~/.ssh/config
-NAMESPACE=""
-TARGET_URL=""
+# These four values are sanitized in the GitHub copy for privacy. Set them
+# for local runs by exporting env vars (recommended) or filling them below.
+# Overriding via env vars keeps secrets out of git.
+SSH_HOST="${SSH_HOST:-}"                                # SSH alias from ~/.ssh/config
+NAMESPACE="${NAMESPACE:-}"
+TARGET_URL="${TARGET_URL:-}"
+K6_PROMETHEUS_RW_SERVER_URL="${K6_PROMETHEUS_RW_SERVER_URL:-}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESULTS_DIR="${SCRIPT_DIR}/results"
 LOGS_DIR="${SCRIPT_DIR}/logs"
 
-# How often to reboot the droplet (every N runs) to prevent cumulative pressure.
-# We discovered this is needed after ~6 hours of continuous load.
-REBOOT_EVERY_N_RUNS=4
+# Reboot cadence.
+# Original 80-run campaign rebooted every 4 runs to relieve memory pressure
+# on the 4 GiB droplet, which had the unintended side effect of resetting
+# the JVM's JIT compilation state and injecting cold-JIT variance into the
+# dataset (see analysis/slo_risk_and_ses_methodology.md §4 threats).
+# For the new campaign the droplet has 8 GiB and JIT warm-up is controlled
+# via the 3 warm-up discarded runs per pattern — reboots are disabled so
+# the JVM stays continuously warm across the counted 20 runs.
+# Set to a very high value rather than removing the reboot code entirely,
+# so the safety net still triggers if the campaign runs for weeks.
+REBOOT_EVERY_N_RUNS=1000
 
 # Stabilization thresholds
 IDLE_REPLICAS=2          # HPA should be at minReplicas before next run
@@ -258,8 +271,23 @@ run_one_iteration() {
     log "k6 starting at $k6_start_iso..."
 
     # Step 4: Run k6 (capture stdout for summary parsing)
+    # Two outputs: JSON (per-request data for offline analysis) and
+    # experimental-prometheus-rw (live metrics into Grafana during the run).
+    # If K6_PROMETHEUS_RW_SERVER_URL is unset, RW output is skipped without
+    # failing the run — JSON alone is sufficient for the analysis pipeline.
+    local rw_args=()
+    if [ -n "$K6_PROMETHEUS_RW_SERVER_URL" ]; then
+        rw_args=(
+            --out "experimental-prometheus-rw"
+            -e "K6_PROMETHEUS_RW_SERVER_URL=$K6_PROMETHEUS_RW_SERVER_URL"
+            -e "K6_PROMETHEUS_RW_TREND_STATS=p(50),p(95),p(99),max"
+            -e "K6_PROMETHEUS_RW_STALE_MARKERS=true"
+        )
+    fi
+
     if k6 run \
         --out "json=$k6_output" \
+        "${rw_args[@]}" \
         -e TARGET_URL="$TARGET_URL" \
         "$LOAD_SCRIPT" 2>&1 | tee "$k6_summary"; then
         log "k6 finished successfully"

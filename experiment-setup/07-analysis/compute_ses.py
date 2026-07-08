@@ -5,19 +5,47 @@ compute_ses.py — Compute Scale Effectiveness Score (SES) per HPA decision.
 Per Chamodi's research proposal (Section 7.2):
   SES = (Latency_before - Latency_after) / Latency_before
 
-Where Latency is the p95 of http_req_duration in the window. Latency_before
-is the [T-60s, T-1s] window before the decision; Latency_after is the
-[T+30s, T+90s] window after the decision. The 30s offset allows time for
-newly-scheduled pods to reach Ready state before measurement.
+Where Latency is the p95 of http_req_duration in the window. Windows follow
+analysis/slo_risk_and_ses_methodology.md §2:
+
+  Latency_before := p95 over [T_decision - 60s, T_decision - 1s]
+                   (60 s ending 1 s before the decision, so the decision
+                    moment itself is not sampled)
+
+  Latency_after  := p95 over [T_pod_Ready, T_pod_Ready + 60s]
+                   (60 s starting from when the newly created pod is Ready,
+                    NOT from T_decision — see methodology §3.5 for the
+                    reasoning: anchoring at T_decision would sample during
+                    the 20-40 s pod-startup phase and systematically bias
+                    correct scale-ups into the Ineffective bucket)
+
+For scale-down decisions there is no new pod. Following methodology §2, the
+after-window is anchored at T_decision + 30 s so the terminating pod can
+complete its preStop grace and drain in-flight requests.
+
+T_pod_Ready comes from the v3 watcher's pod_ready events (per-run event
+files in results/{pattern}-events-{TS}.json). Where no matching pod_ready is
+found for a scale-up decision (edge case: pod never becomes ready, or event
+file missing), the anchor falls back to T_decision + 60 s and the row is
+flagged with t_after_source = "fallback" so the reader can see it happened.
 
 Reads:
-  - results/classified_decisions.csv  (decisions with bucket assignments)
-  - results/run_index.csv             (mapping run_label -> k6 file)
-  - results/{pattern}-run-{TS}.json   (per-request latency data)
+  - results/decisions_with_srd.csv          (decisions augmented with SRD)
+  - results/run_index.csv                   (mapping run_label -> k6 file)
+  - results/{pattern}-events-{TS}.json      (per-run watcher event captures)
+  - results/{pattern}-run-{TS}.json         (per-request latency data)
 
 Writes:
-  - results/decisions_with_ses.csv   (decisions augmented with SES)
-  - results/ses_summary.csv          (per-pattern aggregates)
+  - results/decisions_with_ses.csv          (decisions augmented with SES,
+                                              t_pod_ready_utc, t_after_source,
+                                              cold_start_delay_s — SRD columns
+                                              from the input are passed through)
+  - results/ses_summary.csv                 (per-pattern aggregates)
+
+Note on pipeline order: this file reads from decisions_with_srd.csv (not
+classified_decisions.csv directly) so the final decisions_with_ses.csv
+contains all metrics — bucket, SRD, and SES — in one row per decision.
+Run classify_decisions.py, then compute_srd.py, then this script.
 """
 import json
 import csv
@@ -28,21 +56,32 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
 
+from pod_ready_lookup import (
+    load_pod_ready_events,
+    find_pod_ready_for_decision,
+)
+
 # ============================================================================
 # CONFIG
 # ============================================================================
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = ROOT / "results"
-CLASSIFIED_CSV = RESULTS_DIR / "classified_decisions.csv"
+# Reads decisions_with_srd.csv (the output of compute_srd.py) so the final
+# decisions_with_ses.csv inherits both bucket, SRD, and SES columns.
+# Falls back to classified_decisions.csv if the SRD step wasn't run yet
+# (backwards compatibility).
+INPUT_CSV = RESULTS_DIR / "decisions_with_srd.csv"
+if not INPUT_CSV.exists():
+    INPUT_CSV = RESULTS_DIR / "classified_decisions.csv"
+CLASSIFIED_CSV = INPUT_CSV  # legacy variable name kept for clarity below
 RUN_INDEX_CSV = RESULTS_DIR / "run_index.csv"
 OUTPUT_CSV = RESULTS_DIR / "decisions_with_ses.csv"
 SUMMARY_CSV = RESULTS_DIR / "ses_summary.csv"
 
-# Window sizes (in seconds)
-BEFORE_WINDOW_START = 60   # seconds before T
-BEFORE_WINDOW_END = 1      # seconds before T (excluded right at T)
-AFTER_WINDOW_START = 30    # seconds after T (offset to allow pod-ready)
-AFTER_WINDOW_END = 90      # seconds after T
+# Window sizes (in seconds). See methodology §2.
+BEFORE_WINDOW_LOOKBACK = 60   # window starts this many seconds before T_decision
+BEFORE_WINDOW_EXCLUSION = 1   # window ends this many seconds before T_decision
+AFTER_WINDOW_DURATION = 60    # window duration starting from T_pod_Ready
 
 # Latency statistic to use
 LATENCY_PERCENTILE = 95    # p95
@@ -120,18 +159,37 @@ def latency_in_window(points, timestamps, t_start, t_end):
     return [points[i][1] for i in range(lo, hi)]
 
 
-def compute_ses(decision_ts, points, timestamps):
+def compute_ses(decision_ts, direction, pod_ready_events, points, timestamps):
     """
     Compute SES = (Latency_before - Latency_after) / Latency_before.
-    Returns dict with both latencies + SES (None if either window empty).
+
+    Uses methodology §2 windowing:
+      - Before window: [T_decision - 60s, T_decision - 1s]
+      - After window: [T_pod_Ready, T_pod_Ready + 60s]
+        (T_pod_Ready is resolved via pod_ready_lookup; scale-down and
+         no-match cases use the documented fallbacks)
+
+    Returns dict with both latencies, sample counts, SES, and metadata about
+    which T_pod_Ready anchor was used (t_pod_ready_utc, t_after_source,
+    t_after_pod_name). SES is None if either window is empty.
     """
     t = decision_ts
-    before_start = t - timedelta(seconds=BEFORE_WINDOW_START)
-    before_end = t - timedelta(seconds=BEFORE_WINDOW_END)
-    after_start = t + timedelta(seconds=AFTER_WINDOW_START)
-    after_end = t + timedelta(seconds=AFTER_WINDOW_END)
 
+    # Before window is unchanged from previous code — anchored on T_decision.
+    before_start = t - timedelta(seconds=BEFORE_WINDOW_LOOKBACK)
+    before_end = t - timedelta(seconds=BEFORE_WINDOW_EXCLUSION)
     before_vals = latency_in_window(points, timestamps, before_start, before_end)
+
+    # After window is anchored at T_pod_Ready, NOT T_decision. See
+    # methodology §3.5 for reasoning; the exact rules for pod-ready lookup
+    # (including fallbacks) live in pod_ready_lookup.py.
+    t_after_anchor, t_after_source, t_after_pod_name = find_pod_ready_for_decision(
+        decision_ts=t,
+        direction=direction,
+        pod_ready_events=pod_ready_events,
+    )
+    after_start = t_after_anchor
+    after_end = t_after_anchor + timedelta(seconds=AFTER_WINDOW_DURATION)
     after_vals = latency_in_window(points, timestamps, after_start, after_end)
 
     p95_before = p95(before_vals)
@@ -143,6 +201,14 @@ def compute_ses(decision_ts, points, timestamps):
         'n_before': len(before_vals),
         'n_after': len(after_vals),
         'ses': None,
+        # New v3 metadata — makes the T_pod_Ready anchor auditable.
+        't_pod_ready_utc': t_after_anchor.isoformat(),
+        't_after_source': t_after_source,
+        't_after_pod_name': t_after_pod_name,
+        # Cold-start delay = T_pod_Ready - T_decision (seconds). Useful as
+        # an auxiliary metric per Suvin's guidance; not part of SES.
+        'cold_start_delay_s': round((t_after_anchor - t).total_seconds(), 3)
+                              if t_after_source in ('pod_ready',) else None,
     }
     if p95_before is not None and p95_after is not None and p95_before > 0:
         result['ses'] = (p95_before - p95_after) / p95_before
@@ -186,11 +252,22 @@ def main():
                 decisions_by_run[r['run_label']].append(r)
     print(f"  Loaded {len(all_decisions)} decisions ({sum(len(v) for v in decisions_by_run.values())} tagged to runs)")
 
+    # 2b. Load pod_ready events from all watcher-event files under results/.
+    # These are per-run captures produced by run-campaign.sh's `kubectl logs
+    # --since-time=...` step. pod_ready_lookup.load_pod_ready_events walks
+    # the directory and picks up every {pattern}-events-*.json file.
+    print("Loading pod_ready events from results/...")
+    pod_ready_events = load_pod_ready_events(RESULTS_DIR)
+    print(f"  Loaded {len(pod_ready_events)} pod_ready events")
+
     # 3. For each run, load its k6 latencies once, then compute SES for all its decisions
     # Progress-friendly: log each run as completed so we can monitor from another shell.
     print("Computing SES per decision...")
     n_ses_computed = 0
     n_ses_missing_window = 0
+    n_pod_ready = 0
+    n_fallback = 0
+    n_scale_down = 0
     import time as _time
     t_start = _time.time()
 
@@ -212,22 +289,41 @@ def main():
         timestamps = [p[0] for p in points]
 
         for d in decisions:
-            res = compute_ses(d['_ts'], points, timestamps)
+            res = compute_ses(
+                decision_ts=d['_ts'],
+                direction=d['direction'],
+                pod_ready_events=pod_ready_events,
+                points=points,
+                timestamps=timestamps,
+            )
             d['p95_before_ms'] = res['p95_before_ms']
             d['p95_after_ms'] = res['p95_after_ms']
             d['n_before_requests'] = res['n_before']
             d['n_after_requests'] = res['n_after']
             d['ses'] = res['ses']
+            # New: T_pod_Ready anchor metadata (auditable per methodology)
+            d['t_pod_ready_utc'] = res['t_pod_ready_utc']
+            d['t_after_source'] = res['t_after_source']
+            d['t_after_pod_name'] = res['t_after_pod_name']
+            d['cold_start_delay_s'] = res['cold_start_delay_s']
             if res['ses'] is not None:
                 n_ses_computed += 1
             else:
                 n_ses_missing_window += 1
+            if res['t_after_source'] == 'pod_ready':
+                n_pod_ready += 1
+            elif res['t_after_source'] == 'fallback':
+                n_fallback += 1
+            elif res['t_after_source'] == 'scale_down':
+                n_scale_down += 1
         print(f"  [{i}/{len(decisions_by_run)}] {run_label}: {len(decisions)} decisions, "
               f"loaded {len(points)} points in {_time.time()-t0:.1f}s "
               f"(elapsed: {_time.time()-t_start:.0f}s)", flush=True)
 
     print(f"  SES computed for {n_ses_computed} decisions")
     print(f"  Missing window data for {n_ses_missing_window} decisions (typically near run boundaries)")
+    print(f"  T_after anchor source: {n_pod_ready} pod_ready, "
+          f"{n_fallback} fallback, {n_scale_down} scale_down")
 
     # 4. Write augmented decisions CSV (per-pattern when filtered)
     output_csv = OUTPUT_CSV if filter_pattern == 'all' else \
@@ -235,7 +331,9 @@ def main():
     print(f"Writing {output_csv.name}...")
     sample = next((d for d in all_decisions if 'ses' in d), all_decisions[0])
     extra_fields = ['p95_before_ms', 'p95_after_ms', 'n_before_requests',
-                    'n_after_requests', 'ses']
+                    'n_after_requests', 'ses',
+                    't_pod_ready_utc', 't_after_source', 't_after_pod_name',
+                    'cold_start_delay_s']
     fieldnames = [k for k in all_decisions[0].keys() if k != '_ts' and k not in extra_fields] + extra_fields
     with open(output_csv, 'w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
