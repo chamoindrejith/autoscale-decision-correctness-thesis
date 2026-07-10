@@ -103,17 +103,38 @@ log() {
 # Kubeconfig path on the droplet (chamodi's per-user copy, not the root-only system one)
 REMOTE_KUBECONFIG='$HOME/.kube/config'
 
-# Run a kubectl command on the droplet via SSH.
-# Explicitly sets KUBECONFIG so it works in non-interactive SSH sessions
-# (which don't source ~/.bashrc).
+# LOCAL_MODE: if SSH_HOST is empty or "localhost", assume we're running on the
+# droplet itself (or same host as k8s) and skip the SSH wrapper. This is used
+# for droplet-native campaigns where network flakiness between Mac and droplet
+# would otherwise disrupt long batches.
+if [ -z "$SSH_HOST" ] || [ "$SSH_HOST" = "localhost" ]; then
+    LOCAL_MODE=true
+else
+    LOCAL_MODE=false
+fi
+
+# Run a kubectl command on the cluster.
+# In remote mode: wraps in SSH so it works from a Mac client.
+# In local mode: calls kubectl directly (assumes KUBECONFIG is exported by
+# the caller or by the environment).
 remote_kubectl() {
-    ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "$SSH_HOST" \
-        "export KUBECONFIG=$REMOTE_KUBECONFIG && kubectl $*" 2>&1
+    if [ "$LOCAL_MODE" = "true" ]; then
+        kubectl "$@" 2>&1
+    else
+        ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "$SSH_HOST" \
+            "export KUBECONFIG=$REMOTE_KUBECONFIG && kubectl $*" 2>&1
+    fi
 }
 
-# Run an arbitrary shell command on the droplet
+# Run an arbitrary shell command.
+# In remote mode: wraps in SSH.
+# In local mode: runs the command in a bash subshell locally.
 remote_exec() {
-    ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "$SSH_HOST" "$*" 2>&1
+    if [ "$LOCAL_MODE" = "true" ]; then
+        bash -c "$*" 2>&1
+    else
+        ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "$SSH_HOST" "$*" 2>&1
+    fi
 }
 
 # ============================================================================
@@ -125,10 +146,17 @@ remote_exec() {
 check_cluster_health() {
     log "Pre-flight health check..."
 
-    # 1. Can we reach the droplet at all?
-    if ! ssh -o ConnectTimeout=10 "$SSH_HOST" "echo ok" >/dev/null 2>&1; then
-        log "FAIL: cannot SSH to droplet"
-        return 1
+    # 1. Can we reach the cluster at all?
+    if [ "$LOCAL_MODE" = "true" ]; then
+        if ! kubectl version >/dev/null 2>&1; then
+            log "FAIL: kubectl cannot reach the cluster (LOCAL_MODE)"
+            return 1
+        fi
+    else
+        if ! ssh -o ConnectTimeout=10 "$SSH_HOST" "echo ok" >/dev/null 2>&1; then
+            log "FAIL: cannot SSH to droplet"
+            return 1
+        fi
     fi
 
     # 2. Get HPA status — must show real metrics, not <unknown>
@@ -201,6 +229,12 @@ wait_for_idle() {
 
 # Reboot the droplet and wait for the cluster to come back healthy.
 reboot_and_wait() {
+    if [ "$LOCAL_MODE" = "true" ]; then
+        log "SKIP REBOOT: LOCAL_MODE is set (rebooting our own host would kill the campaign)."
+        log "  If a reboot is genuinely needed, set REBOOT_EVERY_N_RUNS higher"
+        log "  and reboot manually between pattern batches."
+        return 0
+    fi
     log "=== REBOOT CYCLE (cumulative pressure prevention) ==="
     remote_exec "sudo reboot" || true  # connection will drop — that's expected
 
