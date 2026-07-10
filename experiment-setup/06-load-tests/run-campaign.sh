@@ -117,9 +117,14 @@ fi
 # In remote mode: wraps in SSH so it works from a Mac client.
 # In local mode: calls kubectl directly (assumes KUBECONFIG is exported by
 # the caller or by the environment).
+#
+# Note: callers pass all args as ONE string (e.g. remote_kubectl "get pods ..."),
+# so in local mode we `eval` to word-split the string into distinct kubectl
+# arguments. Without eval, kubectl sees "get pods -n ..." as a single command
+# name and errors with `unknown command`.
 remote_kubectl() {
     if [ "$LOCAL_MODE" = "true" ]; then
-        kubectl "$@" 2>&1
+        eval "kubectl $*" 2>&1
     else
         ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "$SSH_HOST" \
             "export KUBECONFIG=$REMOTE_KUBECONFIG && kubectl $*" 2>&1
@@ -128,10 +133,11 @@ remote_kubectl() {
 
 # Run an arbitrary shell command.
 # In remote mode: wraps in SSH.
-# In local mode: runs the command in a bash subshell locally.
+# In local mode: runs via `eval` for the same reason (single-string arg needs
+# shell parsing, not literal execution).
 remote_exec() {
     if [ "$LOCAL_MODE" = "true" ]; then
-        bash -c "$*" 2>&1
+        eval "$*" 2>&1
     else
         ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "$SSH_HOST" "$*" 2>&1
     fi
