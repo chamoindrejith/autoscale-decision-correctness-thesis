@@ -43,8 +43,8 @@ const URL  = `${BASE}?n=${N}`;
 export const options = {
   stages: [
     { duration: '1m',  target: 0 },     // idle baseline
-    { duration: '10s', target: 25 },    // rapid ramp (approved workload)
-    { duration: '60s', target: 25 },    // short burst (HPA gets one chance to react)
+    { duration: '10s', target: 35 },    // rapid ramp (recalibrated post-audit)
+    { duration: '60s', target: 35 },    // short burst (HPA gets one chance to react)
     { duration: '10s', target: 0 },     // back to idle
     { duration: '7m',  target: 0 },     // observe scale-down & any trailing decisions
   ],
