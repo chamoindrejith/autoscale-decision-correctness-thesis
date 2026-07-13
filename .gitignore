@@ -32,6 +32,13 @@ post-*.md
 # (see data/README.md for the access link).
 # =========================================================================
 results/
+**/results/
+experiment-setup/results/
+
+# Interrupted / archived campaign folders — never tracked
+logs-interrupted-*/
+results-interrupted-*/
+results-*-earlier-attempts/
 
 # Local execution logs (the orchestrator writes here at runtime)
 logs/
@@ -69,3 +76,13 @@ id_rsa*
 .env
 .env.local
 secrets/
+campaign_log.md
+/experiment-setup/results/
+# Symlink shim (experiment-setup/results -> 06-load-tests/results)
+experiment-setup/results
+
+# Real target directory of the symlink
+experiment-setup/06-load-tests/results/
+
+# Chapter drafts (markdown) — stay local like the .docx versions
+Chapter*.md
