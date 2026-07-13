@@ -29,17 +29,42 @@ from collections import defaultdict
 # ============================================================================
 # CONFIG
 # ============================================================================
+# ROOT is the `experiment-setup/` directory. RESULTS_DIR resolves to
+# `experiment-setup/results/`. If your results/ are at the repo root, create
+# a symlink:
+#   ln -s ../results experiment-setup/results
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = ROOT / "results"
-JSONL_PATH = RESULTS_DIR / "hpa-events-full.jsonl"
+
+# The watcher log is captured at multiple checkpoints across the campaign
+# (post-step, post-burst, post-ramp, post-noisy). Prefer the latest (most
+# complete) snapshot; fall back to the earlier or the unsuffixed name.
+_CANDIDATES = [
+    RESULTS_DIR / "hpa-events-full-post-noisy.jsonl",
+    RESULTS_DIR / "hpa-events-full-post-ramp.jsonl",
+    RESULTS_DIR / "hpa-events-full-post-burst.jsonl",
+    RESULTS_DIR / "hpa-events-full-post-step.jsonl",
+    RESULTS_DIR / "hpa-events-full.jsonl",
+]
+JSONL_PATH = next((p for p in _CANDIDATES if p.exists()),
+                  RESULTS_DIR / "hpa-events-full.jsonl")
+
 MASTER_CSV = RESULTS_DIR / "master_decisions.csv"
 RUN_INDEX_CSV = RESULTS_DIR / "run_index.csv"
 EXCLUDED_DIR = RESULTS_DIR / "excluded"
 
-# Campaign window — anything before this is pre-campaign setup
-CAMPAIGN_START_UTC = datetime(2026, 6, 1, 0, 0, 0, tzinfo=timezone.utc)
-# Target value during the actual campaign (filter)
-CAMPAIGN_TARGET_PCT = "30%"
+# Campaign window — filter out pre-campaign setup, JIT calibration, pilot
+# activity, and anything before the counted campaign started. The
+# July 2026 campaign ran between 2026-07-10 06:53 UTC (Step start) and
+# 2026-07-11 17:48 UTC (Noisy end). Tightening to 06:30 UTC on July 10
+# so decisions from earlier probe/rollout activity that morning don't
+# show up as "between_runs" entries with no pattern tag.
+CAMPAIGN_START_UTC = datetime(2026, 7, 10, 6, 30, 0, tzinfo=timezone.utc)
+
+# Target value during the actual campaign (filter). The new campaign uses
+# 75% on both CPU and memory (previous proposal-era 30% target is what
+# earlier versions of this file filtered on).
+CAMPAIGN_TARGET_PCT = "75%"
 
 # ============================================================================
 # UTILITIES
