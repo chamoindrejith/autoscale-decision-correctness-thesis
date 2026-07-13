@@ -8,25 +8,28 @@
 //
 //  VUs
 //    ^
-// 60 |       ___
+//    |       ___
 //    |      |   |
 //  0 |______|   |_________________________
 //    +------|---|-----------------------> time
-//           1m  90s      5 minutes tail
+//           1m  60s      7 minutes tail
 //
-// VU count is 25 (peak) — the value approved by the co-supervisor and used
-// throughout the pilot campaign. Documented decision (2026-07-03): keep the
-// workload script unchanged and let HPA behavior be characterised at the
-// workload's natural saturation point, rather than tune the workload to
-// force ceiling saturation on the (now larger) max=10 HPA. The 4-bucket
-// distribution reported by the campaign will therefore reflect the
-// approved workload's actual demand profile — the same workload
-// profile-comparison that was originally sanctioned. Fixed HPA policy is
-// prioritised over exhaustive bucket coverage.
+// Peak VU count is recalibrated against the current 4 vCPU / 75% HPA
+// target cluster via `calib-probe.js` (see the 2026-07-XX recalibration
+// notes in the campaign log). The pilot's 25-VU value was deliberately
+// kept unchanged for the counted campaign, but the counted-campaign
+// results showed only 1 of 182 decisions with a sustained SLO breach —
+// evidence that the pilot-era amplitude is too small to meaningfully
+// stress the current cluster. The recalibrated peak targets ~85-90%
+// sustained pod CPU during the 60 s hold so HPA reliably fires and p95
+// latency briefly touches the 500 ms SLO threshold.
 //
 // Diagnostic history retained for reference:
 //   - 25 VUs on 2 vCPU / max=5 (original pilots): HPA peaked at 3
 //     replicas, 0 failures, p95 989→301 ms across runs (JIT warm-up).
+//   - 25 VUs on 4 vCPU / max=10 (counted campaign): 40 decisions, 1
+//     sustained SLO breach — undersized for the new cluster, motivating
+//     the recalibration.
 //   - 60 VUs on 4 vCPU / max=10 (JIT calibration Run 1, aborted): system
 //     collapsed — pods restarted from probe timeouts. Data discarded.
 

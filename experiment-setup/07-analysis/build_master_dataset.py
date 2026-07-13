@@ -18,10 +18,12 @@ Outputs:
   - results/master_decisions.csv     (one row per HPA decision, tagged)
   - results/run_index.csv            (one row per run, with metadata)
 """
+import argparse
 import json
 import os
 import re
 import csv
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
@@ -54,17 +56,23 @@ RUN_INDEX_CSV = RESULTS_DIR / "run_index.csv"
 EXCLUDED_DIR = RESULTS_DIR / "excluded"
 
 # Campaign window — filter out pre-campaign setup, JIT calibration, pilot
-# activity, and anything before the counted campaign started. The
-# July 2026 campaign ran between 2026-07-10 06:53 UTC (Step start) and
-# 2026-07-11 17:48 UTC (Noisy end). Tightening to 06:30 UTC on July 10
-# so decisions from earlier probe/rollout activity that morning don't
-# show up as "between_runs" entries with no pattern tag.
-CAMPAIGN_START_UTC = datetime(2026, 7, 10, 6, 30, 0, tzinfo=timezone.utc)
+# activity, and anything before the counted campaign started. Provided as
+# a CLI argument (--campaign-start=YYYY-MM-DDTHH:MM:SSZ) or an env var
+# (CAMPAIGN_START_UTC=...); falls back to the earliest run_index start
+# minus 6 hours if neither is set. Historic value for the July 2026
+# counted campaign was 2026-07-10T06:30:00Z.
+CAMPAIGN_START_UTC_DEFAULT = None   # resolved in main() from CLI/env/data
 
-# Target value during the actual campaign (filter). The new campaign uses
-# 75% on both CPU and memory (previous proposal-era 30% target is what
-# earlier versions of this file filtered on).
-CAMPAIGN_TARGET_PCT = "75%"
+# Target value during the actual campaign (filter). The counted campaign
+# uses 75% on both CPU and memory (previous proposal-era 30% target is
+# what earlier versions of this file filtered on). Also settable via
+# --campaign-target-pct or CAMPAIGN_TARGET_PCT env var.
+CAMPAIGN_TARGET_PCT_DEFAULT = "75%"
+
+# These become module-level after CLI parsing so downstream code doesn't
+# have to plumb them through.
+CAMPAIGN_START_UTC: datetime | None = None
+CAMPAIGN_TARGET_PCT: str = CAMPAIGN_TARGET_PCT_DEFAULT
 
 # ============================================================================
 # UTILITIES
@@ -89,10 +97,18 @@ def parse_iso(s):
     return dt.astimezone(timezone.utc)
 
 def extract_trigger_pct(trigger_value):
-    """From '69% (target 30%)' → (69, '30%')."""
-    m = re.match(r'(\d+)%\s*\(target\s*(\d+%)\)', trigger_value or '')
+    """From '69% (target 75%)' → (69, '75%').
+
+    Accepts fractional percentages ('72.5% (target 75%)' → (72.5, '75%'))
+    since HPA metrics-server can occasionally emit them. Integer-valued
+    percentages remain integers so downstream `int(current_pct)` calls
+    still work.
+    """
+    m = re.match(r'(\d+(?:\.\d+)?)%\s*\(target\s*(\d+%)\)', trigger_value or '')
     if m:
-        return int(m.group(1)), m.group(2)
+        raw = m.group(1)
+        current = int(raw) if '.' not in raw else float(raw)
+        return current, m.group(2)
     return None, None
 
 # ============================================================================
@@ -151,44 +167,78 @@ def load_decisions():
                     decisions[-1]['scaling_limit_reason'] = cond.get('reason')
 
     print(f"  Loaded {len(decisions)} campaign decisions")
-    print(f"  Skipped {skipped_early} pre-campaign events (before June 1)")
-    print(f"  Skipped {skipped_target} non-campaign target events (target != 30%)")
+    print(f"  Skipped {skipped_early} pre-campaign events "
+          f"(before {CAMPAIGN_START_UTC.isoformat()})")
+    print(f"  Skipped {skipped_target} non-campaign target events "
+          f"(target != {CAMPAIGN_TARGET_PCT})")
     return decisions
 
 # ============================================================================
 # STEP 2: BUILD RUN INDEX FROM K6 FILES
 # ============================================================================
 
+def _parse_run_num_from_filename(fpath, pattern):
+    """
+    Post-audit: new k6 filenames embed the run number:
+        {pattern}-run-{NN}-{TS}.json  (NN is two-digit run_num)
+    Old (pilot / counted-campaign) filenames omit the run number:
+        {pattern}-run-{TS}.json
+    Prefer the embedded run_num when present; fall back to None so the
+    caller assigns by directory order (matches old behaviour).
+    """
+    m = re.match(rf'{pattern}-run-(\d{{1,4}})-\d{{8}}-\d{{6}}\.json$',
+                 fpath.name)
+    if m:
+        return int(m.group(1))
+    return None
+
+
 def build_run_index():
     """
     Scan k6 result files in results/ (NOT excluded/), extract start/end times
     from the JSON stream, and produce a list of (pattern, run_label, start, end).
+
+    Run numbering:
+      * Prefers the run_num embedded in the k6 filename (new orchestrator
+        format {pattern}-run-{NN}-{TS}.json)
+      * Falls back to enumerate-by-chronological-sort for filenames that
+        omit the embedded run_num (pilot and counted-campaign data)
     """
     runs = []
     patterns = ['step', 'burst', 'ramp', 'noisy']
 
-    # We'll number runs per pattern by file timestamp order.
-    # Each k6 JSON has metric data with timestamps. The earliest is start, latest is end.
     for pattern in patterns:
         files = sorted(RESULTS_DIR.glob(f"{pattern}-run-*.json"))
         # Exclude any in /excluded subdir
         files = [f for f in files if EXCLUDED_DIR not in f.parents]
 
-        for i, fpath in enumerate(files, start=1):
+        fallback_counter = 0
+        for fpath in files:
             start_ts, end_ts = extract_k6_window(fpath)
             if start_ts is None:
                 print(f"  WARNING: could not extract time window from {fpath.name}")
                 continue
 
-            run_label = f"{pattern}-{i:02d}"
+            embedded_num = _parse_run_num_from_filename(fpath, pattern)
+            if embedded_num is not None:
+                run_num = embedded_num
+            else:
+                fallback_counter += 1
+                run_num = fallback_counter
+
+            run_label = f"{pattern}-{run_num:02d}"
             runs.append({
                 'run_label': run_label,
                 'pattern': pattern,
-                'run_num': i,
+                'run_num': run_num,
                 'file_path': fpath.name,
                 'start_utc': start_ts,
                 'end_utc': end_ts,
-                # Capture window: start of k6 to end + 15 min (HPA scale-down period)
+                # Extended tail window used ONLY for scale-down decisions
+                # that fire after k6 ends but before HPA's 5-minute
+                # scale-down stabilisation completes. Scale-ups can NEVER
+                # match against this — they must fall inside the strict
+                # [start, end] k6 window. See tag_decisions() below.
                 'capture_window_end_utc': end_ts + timedelta(minutes=15),
             })
 
@@ -249,18 +299,55 @@ def extract_k6_window(fpath):
 
 def tag_decisions(decisions, runs):
     """
-    For each decision, find the run whose [start, capture_window_end] contains it.
-    Decisions outside any run's window are tagged 'between_runs'.
+    Direction-aware tagging (post-audit fix for the [start, end + 15 min]
+    first-match bug):
+
+      * Scale-UP decisions are tagged ONLY when the timestamp falls
+        strictly inside a run's k6 [start_utc, end_utc] window. If it
+        doesn't fall inside any run's k6 window, the decision is
+        'between_runs' — never assigned to a run's post-k6 tail. This
+        prevents a scale-up that fires during run N+1's load phase from
+        being attributed to run N whose [end + 15 min] extended window
+        also happens to contain the timestamp.
+
+      * Scale-DOWN decisions can additionally use a run's extended
+        [end_utc, end_utc + 15 min] tail, but ONLY if no run's strict
+        window contains them. This covers the legitimate case where
+        HPA's 5-minute scale-down stabilisation fires after k6 ends but
+        before the next run starts.
+
+    On the current campaign data this reproduces the same tags the
+    original code produced (empirical check confirmed 0 of 99 extended-
+    window tags would be reassigned). But it prevents future mistags if
+    the between-run gap ever shrinks below the HPA scale-down window.
     """
     tagged = 0
     untagged = 0
     for d in decisions:
         ts = d['timestamp_utc']
-        match = None
-        for r in runs:
-            if r['start_utc'] <= ts <= r['capture_window_end_utc']:
-                match = r
-                break
+        direction = (d.get('direction') or '').lower()
+
+        # 1. Try strict k6-window match first — this is the only path
+        #    that scale-ups are allowed to take, and the preferred path
+        #    for scale-downs too.
+        strict = next(
+            (r for r in runs if r['start_utc'] <= ts <= r['end_utc']),
+            None,
+        )
+        if strict:
+            match = strict
+        elif direction == 'down':
+            # 2. Scale-downs only: fall back to a run's extended tail,
+            #    but only if no run's strict window contains ts (already
+            #    checked above), so no ambiguity.
+            match = next(
+                (r for r in runs
+                 if r['end_utc'] < ts <= r['capture_window_end_utc']),
+                None,
+            )
+        else:
+            match = None
+
         if match:
             d['run_label'] = match['run_label']
             d['pattern'] = match['pattern']
@@ -314,12 +401,68 @@ def write_run_index(runs):
 # MAIN
 # ============================================================================
 
-def main():
-    print("Step 1: Loading watcher decisions from JSONL...")
-    decisions = load_decisions()
+def resolve_campaign_start(cli_value, runs_hint=None):
+    """Resolve CAMPAIGN_START_UTC from (in priority order):
+    1. --campaign-start CLI argument (or CAMPAIGN_START_UTC env var)
+    2. Fallback: earliest run_index start minus 6 hours
+    """
+    if cli_value:
+        try:
+            s = cli_value.replace('Z', '+00:00')
+            return datetime.fromisoformat(s).astimezone(timezone.utc)
+        except ValueError:
+            print(f"ERROR: could not parse --campaign-start={cli_value!r}",
+                  file=sys.stderr)
+            sys.exit(2)
+    env_value = os.environ.get('CAMPAIGN_START_UTC', '').strip()
+    if env_value:
+        try:
+            s = env_value.replace('Z', '+00:00')
+            return datetime.fromisoformat(s).astimezone(timezone.utc)
+        except ValueError:
+            print(f"ERROR: could not parse env CAMPAIGN_START_UTC={env_value!r}",
+                  file=sys.stderr)
+            sys.exit(2)
+    if runs_hint:
+        earliest = min(r['start_utc'] for r in runs_hint)
+        fallback = earliest - timedelta(hours=6)
+        print(f"  (no --campaign-start given; falling back to "
+              f"earliest run start - 6h = {fallback.isoformat()})")
+        return fallback
+    # No hint available yet; pick a very old date so nothing is filtered.
+    return datetime(2000, 1, 1, tzinfo=timezone.utc)
 
-    print("\nStep 2: Building run index from k6 result files...")
+
+def main():
+    global CAMPAIGN_START_UTC, CAMPAIGN_TARGET_PCT
+
+    ap = argparse.ArgumentParser(description=__doc__.strip() if __doc__ else "")
+    ap.add_argument('--campaign-start',
+                    help="ISO-8601 UTC timestamp — decisions before this "
+                         "are treated as pre-campaign noise and excluded. "
+                         "Defaults to CAMPAIGN_START_UTC env var, then to "
+                         "the earliest run_index start minus 6 hours.")
+    ap.add_argument('--campaign-target-pct',
+                    default=os.environ.get('CAMPAIGN_TARGET_PCT',
+                                           CAMPAIGN_TARGET_PCT_DEFAULT),
+                    help=f"HPA target percentage string used to filter "
+                         f"non-campaign events (default: "
+                         f"{CAMPAIGN_TARGET_PCT_DEFAULT}).")
+    args = ap.parse_args()
+
+    CAMPAIGN_TARGET_PCT = args.campaign_target_pct
+
+    # Build the run index first — we need it to resolve the campaign
+    # start if no CLI argument or env var is provided.
+    print("Step 2: Building run index from k6 result files...")
     runs = build_run_index()
+
+    CAMPAIGN_START_UTC = resolve_campaign_start(args.campaign_start, runs)
+    print(f"  Using CAMPAIGN_START_UTC = {CAMPAIGN_START_UTC.isoformat()}")
+    print(f"  Using CAMPAIGN_TARGET_PCT = {CAMPAIGN_TARGET_PCT}")
+
+    print("\nStep 1: Loading watcher decisions from JSONL...")
+    decisions = load_decisions()
 
     print("\nStep 3: Tagging decisions to runs...")
     decisions = tag_decisions(decisions, runs)

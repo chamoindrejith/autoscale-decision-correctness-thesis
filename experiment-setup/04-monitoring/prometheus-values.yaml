@@ -3,12 +3,14 @@
 
 prometheus:
   prometheusSpec:
-    # How long to keep scraped data. More = more disk. 3d is enough for
-    # analyzing one day of experiments.
-    retention: 3d
+    # How long to keep scraped data. Post-audit: raised from 3d to 14d so
+    # the campaign's HPA + CPU time-series remain queryable for two weeks
+    # after the campaign ends. Additional disk cost at 5s scrape interval
+    # is a few GiB — well within budget.
+    retention: 14d
 
-    # Resource budget. On a 4GB droplet we don't want Prometheus hogging
-    # memory; 1Gi limit is plenty for a handful of targets and short retention.
+    # Resource budget. Node has 8 GiB total; we can afford to give
+    # Prometheus real headroom rather than the pilot's tight 1Gi.
     resources:
       requests:
         cpu: "200m"
@@ -17,9 +19,19 @@ prometheus:
         cpu: "1000m"
         memory: "1Gi"
 
-    # Use a simple emptyDir (data lost on pod restart). Fine for research.
-    # For persistence, set storageSpec with a PVC claim.
-    storageSpec: {}
+    # Persistent storage via PVC so Prometheus data survives pod restarts.
+    # Post-audit: previous `storageSpec: {}` used emptyDir, which lost all
+    # historical scrape data on any pod restart — a single-point-of-failure
+    # for the 35-hour campaign. Uses k3s's default local-path StorageClass
+    # (same one the HPA watcher's PVC uses).
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          storageClassName: local-path
+          resources:
+            requests:
+              storage: 15Gi
 
     # IMPORTANT: this selector tells Prometheus which ServiceMonitors to pick
     # up. Empty selector = all of them, in all namespaces. Matches our

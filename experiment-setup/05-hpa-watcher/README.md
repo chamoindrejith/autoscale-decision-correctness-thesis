@@ -8,8 +8,8 @@ scaling decision as a JSONL event. This is the instrument that provides
 
 ```bash
 # On the Droplet, from this folder:
-docker build -t hpa-watcher:v1 .
-docker save hpa-watcher:v1 | sudo k3s ctr images import -
+docker build -t hpa-watcher:v3 .
+docker save hpa-watcher:v3 | sudo k3s ctr images import -
 kubectl apply -f watcher-deployment.yaml
 
 # Watch the live stream of decisions
@@ -32,10 +32,10 @@ kubectl cp -n autoscale-research "${POD#pod/}:/data/hpa-events.jsonl" ./hpa-even
   "replicas": {"before": 2, "after": 4, "current_at_detection": 2},
   "direction": "up",
   "trigger_metric": "cpu",
-  "trigger_value": "72% (target 50%)",
+  "trigger_value": "72% (target 75%)",
   "last_scale_time": "2026-04-18T10:12:45.302Z",
   "min_replicas": 2,
-  "max_replicas": 8,
+  "max_replicas": 10,
   "hpa_conditions": [...]
 }
 ```

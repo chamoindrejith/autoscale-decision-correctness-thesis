@@ -32,4 +32,10 @@ COPY --from=builder /home/ballerina/project/Config.toml /app/Config.toml
 ENV BAL_CONFIG_FILES=/app/Config.toml
 EXPOSE 9000 9797
 
-ENTRYPOINT ["java", "-jar", "/app/autoscale_test.jar"]
+# -Xmx384m: explicit JVM max heap = 75% of the 512 Mi container memory
+# limit set in 03-kubernetes-manifests/01-deployment.yaml. Leaves ~128 Mi
+# for JVM non-heap (Metaspace, code cache, thread stacks) and container
+# overhead. Explicit ceiling is safer than JDK 17's implicit 25%-of-
+# container default (which would be ~128 Mi and forces heavy GC under
+# JIT compilation load).
+ENTRYPOINT ["java", "-Xmx384m", "-jar", "/app/autoscale_test.jar"]

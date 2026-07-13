@@ -1,13 +1,17 @@
 # HorizontalPodAutoscaler — the research subject.
 #
-# Post-pilot configuration for the 80-run campaign:
-#   - CPU and memory targets set to 75% (moderate sensitivity)
+# Post-pilot configuration for the counted campaign:
+#   - CPU and memory targets both at 75%. HPA fires when either metric
+#     crosses threshold; the current data shows CPU is the driver for
+#     all scale-ups. Memory acts as an OOM safety net rather than a
+#     primary trigger.
 #   - minReplicas = 2   (idle baseline)
-#   - maxReplicas = 10  (broad range so all 4 correctness buckets can be
-#                        observed: Correct, Correct-but-Late, Ineffective
-#                        via ceiling saturation, Unnecessary)
-#   - No `behavior:` block — HPA defaults apply (no custom stabilization
-#     window or per-step scaling policies)
+#   - maxReplicas = 10  (broad range for the SRD-based bucket taxonomy
+#                        used by classify_decisions_v2.py: Correct &
+#                        Timely, Correct but Late, Unnecessary,
+#                        Ineffective via ceiling saturation)
+#   - `behavior:` block writes out the K8s defaults explicitly so any
+#     future K8s upgrade cannot silently change the observed behaviour.
 #
 # Sizing rationale:
 #   - Node has 4 vCPU allocatable = 4000m
@@ -45,3 +49,25 @@ spec:
         target:
           type: Utilization
           averageUtilization: 75
+  # Explicit `behavior` block matching the Kubernetes autoscaling/v2
+  # defaults. Written out so any future upstream default change does not
+  # silently alter observed behaviour. See:
+  # https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/#default-behavior
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0     # scale-up reacts immediately
+      selectPolicy: Max                  # pick the more aggressive of:
+      policies:
+        - type: Percent                  # (a) double the replicas, or
+          value: 100
+          periodSeconds: 15
+        - type: Pods                     # (b) add up to 4 pods per 15s
+          value: 4
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300   # 5-minute settle window
+      selectPolicy: Max                  # (only one policy — Max is a no-op)
+      policies:
+        - type: Percent                  # halve replicas per 15s at most
+          value: 100
+          periodSeconds: 15

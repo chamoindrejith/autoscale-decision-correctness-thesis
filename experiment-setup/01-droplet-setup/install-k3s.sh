@@ -20,8 +20,17 @@ apt-get update -y
 apt-get install -y curl ca-certificates gnupg lsb-release snapd jq
 
 echo ">>> [2/5] Installing k3s"
-# --write-kubeconfig-mode 644 makes the kubeconfig readable by non-root users
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644" sh -
+# --write-kubeconfig-mode 644 makes the kubeconfig readable by non-root users.
+# INSTALL_K3S_VERSION is pinned to the exact k3s (and therefore Kubernetes)
+# version used by the counted campaign. Changing this changes: HPA default
+# behavior policies, metrics-server sync period, container CPU accounting.
+# Override at install time via `INSTALL_K3S_VERSION=... bash install-k3s.sh`
+# only if you know why you're diverging from the campaign environment.
+INSTALL_K3S_VERSION="${INSTALL_K3S_VERSION:-v1.34.6+k3s1}"
+curl -sfL https://get.k3s.io | \
+  INSTALL_K3S_VERSION="${INSTALL_K3S_VERSION}" \
+  INSTALL_K3S_EXEC="--write-kubeconfig-mode 644" \
+  sh -
 
 # Wait for k3s to come up
 echo "Waiting for k3s node to be Ready ..."
@@ -53,8 +62,21 @@ echo ">>> [4/5] Installing Helm"
 curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
 echo ">>> [5/5] Installing Docker"
+# Docker is used only to build the Ballerina sample-app image; the running
+# workload uses k3s + containerd, not Docker. So the version is less
+# critical than k3s, but we still pin loosely via the vendor script's
+# `--version` flag. Override with DOCKER_VERSION=... to install a specific
+# release for strict reproduction; leave blank to install the current
+# vendor-supported release.
+DOCKER_VERSION="${DOCKER_VERSION:-}"
 if ! command -v docker >/dev/null 2>&1; then
-  curl -fsSL https://get.docker.com | sh
+  curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+  if [ -n "${DOCKER_VERSION}" ]; then
+    sh /tmp/get-docker.sh --version "${DOCKER_VERSION}"
+  else
+    sh /tmp/get-docker.sh
+  fi
+  rm -f /tmp/get-docker.sh
 fi
 
 echo ""

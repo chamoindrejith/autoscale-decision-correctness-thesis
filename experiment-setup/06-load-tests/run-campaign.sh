@@ -152,6 +152,19 @@ remote_exec() {
 check_cluster_health() {
     log "Pre-flight health check..."
 
+    # 0. NTP / clock synchronisation. SRD and SES both depend on the
+    #    droplet's clock being aligned with the k6 client's clock. A
+    #    silent drift of even a few seconds distorts the SRD numbers.
+    #    Refuse to start a run if the droplet clock isn't synchronised.
+    local ntp_ok
+    ntp_ok=$(remote_exec "timedatectl show -p NTPSynchronized --value 2>/dev/null" | tr -d ' ')
+    if [ "$ntp_ok" != "yes" ]; then
+        log "FAIL: droplet clock is NOT NTP-synchronised (timedatectl says '$ntp_ok')"
+        log "      Fix with: sudo timedatectl set-ntp true; sudo systemctl restart systemd-timesyncd"
+        return 1
+    fi
+    log "  Clock sync OK (NTPSynchronized=yes)"
+
     # 1. Can we reach the cluster at all?
     if [ "$LOCAL_MODE" = "true" ]; then
         if ! kubectl version >/dev/null 2>&1; then
@@ -284,9 +297,14 @@ run_one_iteration() {
     local run_num=$1
     local run_id=$(printf "%s-run-%02d" "$PATTERN" "$run_num")
     local ts=$(date +%Y%m%d-%H%M%S)
-    local k6_output="${RESULTS_DIR}/${PATTERN}-run-${ts}.json"
+    # Post-audit: embed run_num in the k6 output filename so downstream
+    # analysis (build_master_dataset.py, plot scripts) can parse the
+    # correct run_num from the filename directly. Previous
+    # timestamp-only naming relied on chronological directory sort which
+    # got fragile if runs were re-executed after a failure.
+    local k6_output="${RESULTS_DIR}/${PATTERN}-run-$(printf '%02d' "$run_num")-${ts}.json"
     local k6_summary="${LOGS_DIR}/${run_id}-${ts}-summary.txt"
-    local events_output="${RESULTS_DIR}/${PATTERN}-events-${ts}.json"
+    local events_output="${RESULTS_DIR}/${PATTERN}-events-$(printf '%02d' "$run_num")-${ts}.json"
 
     log ""
     log "######################################################################"
@@ -413,3 +431,36 @@ log "BATCH COMPLETE: $PATTERN runs $START_RUN through $END_RUN"
 log "Check $LOGS_DIR for individual run summaries"
 log "Check $RESULTS_DIR for k6 outputs and watcher events"
 log "============================================================"
+
+# Copy the durable JSONL from the watcher's PersistentVolume as a
+# post-batch audit snapshot. This gives the analysis pipeline a
+# tamper-proof source of truth (matching build_master_dataset.py's
+# `hpa-events-full-post-{pattern}.jsonl` search) without relying on
+# `kubectl logs`, which loses history across watcher pod restarts.
+log ""
+log "Snapshotting durable watcher JSONL to results/..."
+snapshot_dst="${RESULTS_DIR}/hpa-events-full-post-${PATTERN}.jsonl"
+watcher_pod=$(remote_kubectl "get pod -n $NAMESPACE -l app=hpa-watcher -o name 2>/dev/null" | head -1)
+if [ -n "$watcher_pod" ]; then
+    # remote_kubectl wraps in SSH when needed. For kubectl cp we must run
+    # locally (in LOCAL_MODE) or via the SSH host (in remote mode) so the
+    # file ends up in $RESULTS_DIR on THIS host.
+    if [ "$LOCAL_MODE" = "true" ]; then
+        kubectl cp -n "$NAMESPACE" \
+            "${watcher_pod#pod/}:/data/hpa-events.jsonl" \
+            "$snapshot_dst" >/dev/null 2>&1 \
+            && log "  Wrote $(basename "$snapshot_dst") ($(wc -l < "$snapshot_dst") lines)" \
+            || log "  WARN: kubectl cp failed for $watcher_pod"
+    else
+        ssh -o ConnectTimeout=10 "$SSH_HOST" \
+            "export KUBECONFIG=$REMOTE_KUBECONFIG && \
+             kubectl cp -n $NAMESPACE ${watcher_pod#pod/}:/data/hpa-events.jsonl /tmp/hpa-events-full-post-${PATTERN}.jsonl" \
+            >/dev/null 2>&1 \
+            && scp -o ConnectTimeout=10 "$SSH_HOST:/tmp/hpa-events-full-post-${PATTERN}.jsonl" \
+                    "$snapshot_dst" >/dev/null 2>&1 \
+            && log "  Wrote $(basename "$snapshot_dst") ($(wc -l < "$snapshot_dst") lines)" \
+            || log "  WARN: kubectl cp/scp failed for $watcher_pod"
+    fi
+else
+    log "  WARN: could not locate watcher pod for JSONL snapshot"
+fi

@@ -14,7 +14,10 @@ may shift between revisions, but the core settings remain consistent.
    - Droplet Type: **Basic**
    - CPU options: **Premium Intel** — fastest clock; preferred for a
      compute-bound experiment
-   - Plan: **2 vCPU / 4 GB RAM / 80 GB SSD** (~$24/month, $0.036/hour)
+   - Plan: **4 vCPU / 8 GB RAM / 160 GB SSD** (~$48/month, $0.071/hour)
+     — sized for the post-pilot campaign (maxReplicas=10 at 75% HPA
+     target). The earlier 2 vCPU / 4 GB size was used only during pilot
+     runs and does not match the counted-campaign environment.
 6. **Authentication**: SSH Key → select the previously-added key.
 7. **Finalize Details**:
    - Quantity: 1
@@ -41,7 +44,7 @@ doctl compute ssh-key list
 doctl compute droplet create k3s-research \
   --region sgp1 \
   --image ubuntu-24-04-x64 \
-  --size s-2vcpu-4gb-intel \
+  --size s-4vcpu-8gb-intel \
   --ssh-keys SSH_KEY_ID \
   --tag-names research,hpa-study \
   --wait
@@ -66,7 +69,7 @@ free -h
 df -h
 ```
 
-Expected: 4 GB RAM visible, ~75 GB disk free.
+Expected: 8 GB RAM visible, ~155 GB disk free.
 
 ## One-Time Initial Setup
 
@@ -100,5 +103,5 @@ Two options to reduce cost:
   Droplet → Snapshots → Take Snapshot, then Destroy. Recreate from the
   snapshot to resume work.
 
-Snapshot cost: approximately $0.06/GB/month × 80 GB = ~$4.80/month, which
+Snapshot cost: approximately $0.06/GB/month × 160 GB = ~$9.60/month, which
 is roughly 5× cheaper than leaving the droplet running.

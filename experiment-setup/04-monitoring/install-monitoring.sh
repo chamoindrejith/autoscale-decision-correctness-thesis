@@ -6,7 +6,12 @@
 
 set -euo pipefail
 
-CHART_VERSION="${CHART_VERSION:-}"        # blank = latest
+# Chart version pinned to the release actually used by the counted campaign.
+# Override at install time with CHART_VERSION=... if you know what you're
+# doing. The paired Prometheus / Grafana / exporter app versions are baked
+# into this chart release, so pinning here pins the whole observability
+# stack for reproducibility.
+CHART_VERSION="${CHART_VERSION:-83.6.0}"   # kube-prometheus-stack 83.6.0 → Prometheus v0.90.1
 RELEASE_NAME="kube-prometheus-stack"
 NAMESPACE="monitoring"
 

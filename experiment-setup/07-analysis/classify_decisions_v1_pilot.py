@@ -1,8 +1,23 @@
 #!/usr/bin/env python3
 """
-classify_decisions.py — Apply 4-bucket correctness classification to each HPA
-decision in master_decisions.csv. Produces classified_decisions.csv plus
-summary tables for the thesis.
+classify_decisions_v1_pilot.py — LEGACY CPU-based classifier.
+
+╔══════════════════════════════════════════════════════════════════════════╗
+║  LEGACY — DO NOT USE FOR THE COUNTED CAMPAIGN OR THE RERUN.              ║
+║                                                                          ║
+║  Thresholds (30% target, 60% "late") are calibrated for the PILOT at    ║
+║  30% HPA target on the earlier 2 vCPU droplet. On the 75% HPA target    ║
+║  campaign, these rules do not discriminate: every scale-up would be     ║
+║  auto-classified "Correct but Late" and every scale-down "Unnecessary". ║
+║                                                                          ║
+║  Use classify_decisions_v2.py (SRD-based) as the primary classifier    ║
+║  for all counted-campaign and rerun data. This file is preserved for    ║
+║  pilot-comparability reproduction — see Chapter 5 Threats to Validity.  ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+Applies a 4-bucket correctness classification to each HPA decision in
+master_decisions.csv. Produces classified_decisions.csv plus summary
+tables for the pilot's thesis chapter.
 
 Buckets:
   - Correct & Timely

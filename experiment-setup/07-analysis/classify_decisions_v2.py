@@ -103,7 +103,9 @@ def classify_srd(row: dict) -> tuple[str, str, str]:
     Applies the rules described in the module docstring.
     """
     direction = (row.get("direction") or "").lower()
-    scaling_limited = (str(row.get("scaling_limited", "")).strip() == "True")
+    # Case-insensitive: CSVs may store True / true / TRUE depending on how
+    # the writer serialised the Python bool. Compare in lowercase to be safe.
+    scaling_limited = (str(row.get("scaling_limited", "")).strip().lower() == "true")
     limit_reason = (row.get("scaling_limit_reason") or "").strip()
 
     # -----------------------------------------------------------------

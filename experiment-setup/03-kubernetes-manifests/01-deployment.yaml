@@ -36,10 +36,14 @@ spec:
           resources:
             requests:
               cpu: "200m"
-              memory: "256Mi"
+              memory: "512Mi"   # raised from 256Mi — the earlier value was
+                                 # within 20% of Ballerina JVM's warm working
+                                 # set (baseline ~115 MB idle, ~250-400 MB
+                                 # under sustained load with JIT). 512 Mi
+                                 # gives ~2× headroom over observed peak.
             limits:
               cpu: "200m"
-              memory: "256Mi"
+              memory: "512Mi"
           # --- Probes ---
           # Both probes are DELIBERATELY LENIENT because the pod is
           # deliberately CPU-saturated during bursts, and requests==limits
@@ -49,6 +53,20 @@ spec:
           # mid-burst because /api/health couldn't respond fast enough while
           # /api/compute pinned all 200m of CPU. Values below give each probe
           # generous time and tolerate multiple consecutive failures.
+          #
+          # startupProbe added post-audit: without it, the liveness probe
+          # fires 15 s after container start. If the Ballerina JVM's warm-up
+          # runs past 15 s under CPU pressure, the failure counter starts
+          # against a still-warming pod. startupProbe defers liveness until
+          # the container signals it's ready — up to 60 s (10 × 6 s) —
+          # eliminating a documented silent-restart failure mode.
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 9000
+            periodSeconds: 6
+            timeoutSeconds: 5
+            failureThreshold: 10   # allows up to 60 s for JVM warm-up
           readinessProbe:
             httpGet:
               path: /api/health

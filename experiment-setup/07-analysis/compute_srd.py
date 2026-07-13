@@ -61,7 +61,13 @@ from pathlib import Path
 # ============================================================================
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = ROOT / "results"
-INPUT_CSV = RESULTS_DIR / "classified_decisions.csv"
+# Post-audit: read from master_decisions.csv directly instead of
+# classified_decisions.csv. The CPU-based classify_decisions.py (v1) is
+# no longer part of the primary pipeline for the 75% HPA target campaign
+# — it was renamed to classify_decisions_v1_pilot.py and preserved only
+# for pilot-comparability reproduction. The SRD-based classifier
+# (classify_decisions_v2.py) runs AFTER compute_srd + compute_ses instead.
+INPUT_CSV = RESULTS_DIR / "master_decisions.csv"
 RUN_INDEX_CSV = RESULTS_DIR / "run_index.csv"
 OUTPUT_CSV = RESULTS_DIR / "decisions_with_srd.csv"
 
@@ -69,19 +75,24 @@ OUTPUT_CSV = RESULTS_DIR / "decisions_with_srd.csv"
 # analysis in the thesis (methodology §4) can vary them.
 # Override via environment variables if you want to try a different value
 # without editing this file:
-#     SLO_THRESHOLD_MS=300 SLO_SUSTAINED_SAMPLES=5 python3 compute_srd.py all
+#     SLO_THRESHOLD_MS=300 SLO_SUSTAINED_SECONDS=5 python3 compute_srd.py all
 import os as _os
 SLO_THRESHOLD_MS = int(_os.environ.get("SLO_THRESHOLD_MS", "500"))
 SLO_WINDOW_SECONDS = int(_os.environ.get("SLO_WINDOW_SECONDS", "30"))
 MIN_SAMPLES_FOR_P95 = 20        # skip windows with too few requests to trust p95
 
 # SUSTAINED requirement: T_SLO_risk fires only when p95 has been above
-# threshold for at least SLO_SUSTAINED_SAMPLES consecutive request-timestamp
-# checks. This suppresses spurious early-run breaches from cold-start
-# spikes or single-request outliers.
-# Default 3 corresponds to ~1-3 seconds of continuous breach at burst
-# throughput. Set to 1 to reproduce the original "first-hit" behaviour.
-SLO_SUSTAINED_SAMPLES = int(_os.environ.get("SLO_SUSTAINED_SAMPLES", "3"))
+# threshold continuously for at least SLO_SUSTAINED_SECONDS. This
+# suppresses spurious early-run breaches from cold-start spikes or
+# single-request outliers, and aligns with the SRE Workbook Multi-Window
+# Multi-Burn-Rate pattern the methodology cites.
+#
+# Post-audit change: previously this was SLO_SUSTAINED_SAMPLES (a count of
+# consecutive request-timestamp checks). Sample-count semantics gave
+# different effective time thresholds at different request rates (~30 ms
+# at 100 RPS vs. ~1.5 s at 2 RPS), which biased cross-pattern comparison.
+# Time-based semantics are RPS-independent.
+SLO_SUSTAINED_SECONDS = float(_os.environ.get("SLO_SUSTAINED_SECONDS", "5"))
 
 
 # ============================================================================
@@ -136,24 +147,26 @@ def p95(values):
 
 def find_t_slo_risk(points, timestamps):
     """
-    Find T_SLO_risk = first request-timestamp t such that the p95 of
-    http_req_duration in [t - SLO_WINDOW_SECONDS, t] has been above
-    SLO_THRESHOLD_MS for SLO_SUSTAINED_SAMPLES consecutive checks.
+    Find T_SLO_risk = timestamp of the first sample in a streak where the
+    rolling p95 of http_req_duration over [t - SLO_WINDOW_SECONDS, t] has
+    been above SLO_THRESHOLD_MS continuously for at least
+    SLO_SUSTAINED_SECONDS wall-clock time.
 
     Uses request timestamps as the sampling grid. Windows with fewer
     than MIN_SAMPLES_FOR_P95 requests are skipped to avoid spurious
-    breaches from single slow outliers early in the run.
+    breaches from single slow outliers early in the run — a streak
+    encountering such a window is also reset because we can't confirm
+    the breach is continuing.
 
-    The "sustained" requirement (SLO_SUSTAINED_SAMPLES > 1) is what
-    suppresses cold-start blips: a single 30-second window trip is not
-    enough — the p95 must stay above threshold for multiple
-    consecutive samples. Returns the timestamp of the FIRST sample in
-    the sustained-breach run so downstream SRD reflects the actual
-    onset of the SLO breach, not the moment of confirmation.
+    Time-based (not sample-count-based) so the effective breach-detection
+    delay is RPS-independent, matching the SRE Workbook Multi-Window
+    Multi-Burn-Rate pattern the methodology cites.
 
-    Returns a datetime, or None if no sustained SLO breach is found.
+    Returns the datetime of the FIRST sample in the sustained-breach
+    streak (so SRD reflects the actual onset of the breach, not the
+    moment it was confirmed), or None if no sustained breach is found.
     """
-    consecutive_breaches = 0
+    in_streak = False
     first_breach_ts = None
     for i, (t, _) in enumerate(points):
         window_start = t - timedelta(seconds=SLO_WINDOW_SECONDS)
@@ -161,19 +174,23 @@ def find_t_slo_risk(points, timestamps):
         hi = i + 1  # include this request in its own window
         if hi - lo < MIN_SAMPLES_FOR_P95:
             # window too sparse to trust — reset any running streak
-            consecutive_breaches = 0
+            in_streak = False
             first_breach_ts = None
             continue
         window_vals = [points[j][1] for j in range(lo, hi)]
         if p95(window_vals) > SLO_THRESHOLD_MS:
-            if consecutive_breaches == 0:
+            if not in_streak:
                 first_breach_ts = t
-            consecutive_breaches += 1
-            if consecutive_breaches >= SLO_SUSTAINED_SAMPLES:
+                in_streak = True
+            # Confirmed sustained once elapsed time in streak crosses
+            # SLO_SUSTAINED_SECONDS. Return the streak's ONSET, not the
+            # confirmation time.
+            elapsed = (t - first_breach_ts).total_seconds()
+            if elapsed >= SLO_SUSTAINED_SECONDS:
                 return first_breach_ts
         else:
             # streak broken — reset
-            consecutive_breaches = 0
+            in_streak = False
             first_breach_ts = None
     return None
 
@@ -187,8 +204,8 @@ def main():
     print(f"SLO threshold: p95 > {SLO_THRESHOLD_MS} ms")
     print(f"SLO detection window: {SLO_WINDOW_SECONDS} s rolling")
     print(f"Minimum samples per window: {MIN_SAMPLES_FOR_P95}")
-    print(f"Sustained-breach requirement: {SLO_SUSTAINED_SAMPLES} "
-          f"consecutive windows above threshold")
+    print(f"Sustained-breach requirement: {SLO_SUSTAINED_SECONDS} "
+          f"seconds of continuous p95 breach")
     print()
 
     # 1. Load run index → maps run_label → k6 file path
