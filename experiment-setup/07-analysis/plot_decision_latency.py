@@ -57,12 +57,12 @@ def main():
         print(f"ERROR: no rows found for decision_id={args.decision_id}")
         sys.exit(1)
     d = pd.DataFrame(rows)
-    d['request_seconds_relative_to_decision'] = d['request_seconds_relative_to_decision'].astype(float)
+    d['request_seconds_relative_to_anchor'] = d['request_seconds_relative_to_anchor'].astype(float)
     d['latency_ms'] = d['latency_ms'].astype(float)
     print(f"  Collected {len(d)} rows for this decision")
 
     # Sort by time relative to decision
-    d = d.sort_values('request_seconds_relative_to_decision')
+    d = d.sort_values('request_seconds_relative_to_anchor')
 
     # Split into before/after for plotting
     before = d[d['window'] == 'before']
@@ -86,9 +86,9 @@ def main():
 
     # Build the plot
     fig, ax = plt.subplots(figsize=(11, 5.5))
-    ax.scatter(before['request_seconds_relative_to_decision'], before['latency_ms'],
+    ax.scatter(before['request_seconds_relative_to_anchor'], before['latency_ms'],
                s=6, alpha=0.5, color='steelblue', label=f'Before (n={len(before)})')
-    ax.scatter(after['request_seconds_relative_to_decision'], after['latency_ms'],
+    ax.scatter(after['request_seconds_relative_to_anchor'], after['latency_ms'],
                s=6, alpha=0.5, color='darkorange', label=f'After (n={len(after)})')
 
     # Mark the decision moment with a red dashed line
@@ -104,7 +104,8 @@ def main():
                    label=f'p95 after = {p95_after:.1f} ms')
 
     # Labels
-    ax.set_xlabel("Seconds relative to HPA decision")
+    ax.set_xlabel("Seconds relative to window anchor "
+                  "(T_decision for before window, T_pod_Ready for after window)")
     ax.set_ylabel("Request latency (ms)")
     title = f"Decision {args.decision_id} — {run_label} ({direction}-scaling)"
     if ses is not None and not pd.isna(ses):

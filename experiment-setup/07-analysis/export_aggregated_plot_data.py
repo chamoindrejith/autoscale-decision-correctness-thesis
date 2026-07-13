@@ -46,10 +46,15 @@ with open(INPUT) as f:
     r = csv.DictReader(f)
     for row in r:
         total += 1
+        # Column renamed to '_to_anchor' when the SES after-window was
+        # re-anchored at T_pod_Ready (methodology §3.5). Support both the
+        # new and the legacy name for backwards compatibility.
+        raw_t = (row.get('request_seconds_relative_to_anchor')
+                 or row.get('request_seconds_relative_to_decision'))
         try:
-            t_rel = float(row['request_seconds_relative_to_decision'])
+            t_rel = float(raw_t)
             lat = float(row['latency_ms'])
-        except (KeyError, ValueError):
+        except (KeyError, ValueError, TypeError):
             continue
         if t_rel < T_MIN or t_rel > T_MAX:
             continue

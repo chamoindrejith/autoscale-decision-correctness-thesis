@@ -45,10 +45,14 @@ with open(INPUT) as f:
     r = csv.DictReader(f)
     for row in r:
         total_rows += 1
+        # Column renamed to '_to_anchor' when the SES after-window was
+        # re-anchored at T_pod_Ready (methodology §3.5). Support both.
+        raw_t = (row.get('request_seconds_relative_to_anchor')
+                 or row.get('request_seconds_relative_to_decision'))
         try:
-            t_rel = float(row['request_seconds_relative_to_decision'])
+            t_rel = float(raw_t)
             lat = float(row['latency_ms'])
-        except (KeyError, ValueError):
+        except (KeyError, ValueError, TypeError):
             continue
         if t_rel < T_MIN or t_rel > T_MAX:
             continue
@@ -97,10 +101,12 @@ ax.axvline(0, color='black', linestyle='--', alpha=0.6,
 ax.axvspan(0, 30, color='gray', alpha=0.1)
 ax.text(15, ax.get_ylim()[1]*0.95, '30s offset\n(skipped)',
         ha='center', va='top', fontsize=8, color='gray')
-ax.set_xlabel("Seconds relative to HPA decision")
+ax.set_xlabel("Seconds relative to window anchor "
+              "(T_decision for before, T_pod_Ready for after)")
 ax.set_ylabel("Request latency (ms) — median across all decisions")
 ax.set_title("Aggregated Latency Profile Around HPA Decisions\n"
-             "Shaded band = inter-quartile range (25th–75th percentile)")
+             "Before window anchored at T_decision; "
+             "after window at T_pod_Ready (methodology §3.5)")
 ax.legend(loc='upper left')
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
