@@ -67,9 +67,21 @@ OUTPUT_CSV = RESULTS_DIR / "decisions_with_srd.csv"
 
 # SLO detection parameters. Kept as module constants so the sensitivity
 # analysis in the thesis (methodology §4) can vary them.
-SLO_THRESHOLD_MS = 500          # p95 threshold above which SLO is at risk
-SLO_WINDOW_SECONDS = 30         # rolling window length
+# Override via environment variables if you want to try a different value
+# without editing this file:
+#     SLO_THRESHOLD_MS=300 SLO_SUSTAINED_SAMPLES=5 python3 compute_srd.py all
+import os as _os
+SLO_THRESHOLD_MS = int(_os.environ.get("SLO_THRESHOLD_MS", "500"))
+SLO_WINDOW_SECONDS = int(_os.environ.get("SLO_WINDOW_SECONDS", "30"))
 MIN_SAMPLES_FOR_P95 = 20        # skip windows with too few requests to trust p95
+
+# SUSTAINED requirement: T_SLO_risk fires only when p95 has been above
+# threshold for at least SLO_SUSTAINED_SAMPLES consecutive request-timestamp
+# checks. This suppresses spurious early-run breaches from cold-start
+# spikes or single-request outliers.
+# Default 3 corresponds to ~1-3 seconds of continuous breach at burst
+# throughput. Set to 1 to reproduce the original "first-hit" behaviour.
+SLO_SUSTAINED_SAMPLES = int(_os.environ.get("SLO_SUSTAINED_SAMPLES", "3"))
 
 
 # ============================================================================
@@ -124,24 +136,45 @@ def p95(values):
 
 def find_t_slo_risk(points, timestamps):
     """
-    Find T_SLO_risk = first request-timestamp t such that
-        p95( latency in [t - SLO_WINDOW_SECONDS, t] ) > SLO_THRESHOLD_MS.
+    Find T_SLO_risk = first request-timestamp t such that the p95 of
+    http_req_duration in [t - SLO_WINDOW_SECONDS, t] has been above
+    SLO_THRESHOLD_MS for SLO_SUSTAINED_SAMPLES consecutive checks.
 
-    Uses request timestamps as the sampling grid. Windows with fewer than
-    MIN_SAMPLES_FOR_P95 requests are skipped to avoid spurious breaches
-    from a single slow outlier at the very start of load.
+    Uses request timestamps as the sampling grid. Windows with fewer
+    than MIN_SAMPLES_FOR_P95 requests are skipped to avoid spurious
+    breaches from single slow outliers early in the run.
 
-    Returns a datetime, or None if the SLO is never breached in this run.
+    The "sustained" requirement (SLO_SUSTAINED_SAMPLES > 1) is what
+    suppresses cold-start blips: a single 30-second window trip is not
+    enough — the p95 must stay above threshold for multiple
+    consecutive samples. Returns the timestamp of the FIRST sample in
+    the sustained-breach run so downstream SRD reflects the actual
+    onset of the SLO breach, not the moment of confirmation.
+
+    Returns a datetime, or None if no sustained SLO breach is found.
     """
+    consecutive_breaches = 0
+    first_breach_ts = None
     for i, (t, _) in enumerate(points):
         window_start = t - timedelta(seconds=SLO_WINDOW_SECONDS)
         lo = bisect.bisect_left(timestamps, window_start)
         hi = i + 1  # include this request in its own window
         if hi - lo < MIN_SAMPLES_FOR_P95:
+            # window too sparse to trust — reset any running streak
+            consecutive_breaches = 0
+            first_breach_ts = None
             continue
         window_vals = [points[j][1] for j in range(lo, hi)]
         if p95(window_vals) > SLO_THRESHOLD_MS:
-            return t
+            if consecutive_breaches == 0:
+                first_breach_ts = t
+            consecutive_breaches += 1
+            if consecutive_breaches >= SLO_SUSTAINED_SAMPLES:
+                return first_breach_ts
+        else:
+            # streak broken — reset
+            consecutive_breaches = 0
+            first_breach_ts = None
     return None
 
 
@@ -154,6 +187,8 @@ def main():
     print(f"SLO threshold: p95 > {SLO_THRESHOLD_MS} ms")
     print(f"SLO detection window: {SLO_WINDOW_SECONDS} s rolling")
     print(f"Minimum samples per window: {MIN_SAMPLES_FOR_P95}")
+    print(f"Sustained-breach requirement: {SLO_SUSTAINED_SAMPLES} "
+          f"consecutive windows above threshold")
     print()
 
     # 1. Load run index → maps run_label → k6 file path
