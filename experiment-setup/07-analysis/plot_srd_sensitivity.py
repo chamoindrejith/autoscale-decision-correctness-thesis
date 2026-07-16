@@ -77,12 +77,14 @@ PATTERN_COLORS = {
     "ramp":  "#2ca02c",
     "noisy": "#d62728",
 }
-BUCKETS = ["Correct & Timely", "Correct but Late", "Unnecessary", "Ineffective"]
+BUCKETS = ["Correct & Timely", "Correct but Late", "Unnecessary",
+           "Ineffective", "Undefined"]
 BUCKET_COLORS = {
     "Correct & Timely":  "#2ca02c",
     "Correct but Late":  "#ff7f0e",
     "Unnecessary":       "#7f7f7f",
     "Ineffective":       "#d62728",
+    "Undefined":         "#cccccc",   # v3 addition — SES unavailable
 }
 
 
@@ -144,23 +146,38 @@ def find_t_slo_risk(points, timestamps, threshold_ms: float):
 
 
 # =====================================================================
-# BUCKET RULES (same as classify_decisions_v2.py)
+# BUCKET RULES (v3 = proposal-aligned SRD × SES, same as classify_decisions_v3.py)
 # =====================================================================
 
+# Near-zero SES threshold (matches classify_decisions_v3.py default)
+SES_NEAR_ZERO_TAU = 0.05
+
+
 def srd_bucket(direction: str, srd_source: str, srd_seconds: float | None,
-               scaling_limited: bool, limit_reason: str) -> str:
-    if scaling_limited:
-        if direction == "up" and limit_reason == "TooManyReplicas":
-            return "Ineffective"
-        if direction == "down" and limit_reason == "TooFewReplicas":
-            return "Ineffective"
+               ses: float | None,
+               scaling_limited: bool = False,
+               limit_reason: str = "") -> str:
+    """v3 (proposal-aligned) classification. Uses SRD AND SES.
+
+    NOTE: kept `scaling_limited` and `limit_reason` in the signature for
+    backward compatibility with the caller, but v3 does NOT use them.
+    """
     if direction == "down":
         return "Correct & Timely"
+    # Scale-up rules (priority order)
     if srd_source == "no_slo_breach":
         return "Unnecessary"
-    if srd_source in ("late", "pre_emptive") and srd_seconds is not None:
+    if ses is None:
+        return "Undefined"
+    if ses < -SES_NEAR_ZERO_TAU:
+        return "Ineffective"
+    if abs(ses) <= SES_NEAR_ZERO_TAU:
+        return "Unnecessary"
+    if ses > SES_NEAR_ZERO_TAU:
+        if srd_seconds is None:
+            return "Undefined"
         return "Correct but Late" if srd_seconds > 0 else "Correct & Timely"
-    return "Unnecessary"
+    return "Undefined"
 
 
 # =====================================================================
@@ -184,6 +201,12 @@ def main() -> None:
                 continue
             r["_ts"] = parse_iso(r["timestamp_utc"])
             r["_run_num"] = run_num
+            # Parse SES once — v3 rules need it at every threshold, and
+            # SES itself does NOT change with the SLO threshold.
+            try:
+                r["_ses"] = float(r.get("ses"))
+            except (ValueError, TypeError):
+                r["_ses"] = None
             decisions.append(r)
     print(f"  {len(decisions)} counted decisions loaded")
 
@@ -254,7 +277,7 @@ def main() -> None:
                     srd = (d["_ts"] - t_slo_risk).total_seconds()
                     src = "pre_emptive" if srd < 0 else "late"
 
-                bucket = srd_bucket(direction, src, srd,
+                bucket = srd_bucket(direction, src, srd, d.get("_ses"),
                                     scaling_limited, limit_reason)
                 results[thr][pattern].append({
                     "src": src,

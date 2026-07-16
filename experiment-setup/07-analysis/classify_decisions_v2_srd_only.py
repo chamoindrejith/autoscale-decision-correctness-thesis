@@ -1,12 +1,28 @@
 #!/usr/bin/env python3
 """
-classify_decisions_v2.py — SRD-based reclassification of HPA decisions.
+classify_decisions_v2_srd_only.py — LEGACY SRD-only classifier.
 
-Produces a parallel bucket assignment that ties "Late" to the actual SLO
+╔══════════════════════════════════════════════════════════════════════════╗
+║  LEGACY — NOT PART OF THE PRIMARY PIPELINE.                              ║
+║                                                                          ║
+║  This classifier uses SRD only (SRD sign for Timely vs Late, srd_source  ║
+║  = 'no_slo_breach' for Unnecessary, and scaling_limited for              ║
+║  Ineffective). It DOES NOT use SES. The proposal-aligned classifier     ║
+║  classify_decisions_v3.py is now primary (July 2026 audit decision):    ║
+║  it uses the SRD × SES matrix specified in the research proposal's      ║
+║  Section 9.                                                              ║
+║                                                                          ║
+║  This file is preserved only to allow reproduction of the SRD-only       ║
+║  bucket counts referenced in the audit trail. It should NOT be run as   ║
+║  part of the primary pipeline for the rerun analysis or thesis          ║
+║  Chapter 4 results.                                                     ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+Produces an SRD-only bucket assignment that ties "Late" to actual SLO
 breach (p95 > 500 ms sustained 30 s) rather than to a CPU proxy. This is
-the classification approach the methodology doc (§2 + §5) points to in
-principle, and the approach reviewer guidance leaned toward when the
-CPU-based bucket-boundary problem was raised at the 75 % HPA target.
+the classification approach the methodology doc (§2 + §5) originally
+pointed to before the proposal-aligned SRD × SES matrix was fully
+implemented in v3.
 
 Rules
 -----

@@ -13,7 +13,7 @@ Sections
 1. CAMPAIGN OVERVIEW           — dates, totals, HPA + SLO configuration
 2. RUNS PER PATTERN            — raw / warm-up / counted breakdown
 3. DECISIONS PER PATTERN       — same, at the decision level, up vs down
-4. BUCKET DISTRIBUTION (500 ms) — SRD-based classification, counted only
+4. BUCKET DISTRIBUTION (500 ms) — Proposal-aligned (SRD+SES), counted only
 5. SRD SUMMARY (defined only)  — median / min / max SRD per pattern
 6. SES SUMMARY                  — mean / median / min / max SES per pattern
 7. THRESHOLD SENSITIVITY        — bucket counts across {250,400,500,750,1000} ms
@@ -211,7 +211,7 @@ def build_bucket_distribution(decisions: list[dict]) -> Section:
     counted = [d for d in decisions if is_counted(d)]
     grid: dict[tuple[str, str], int] = defaultdict(int)
     for d in counted:
-        b = (d.get("bucket_srd") or "").strip()
+        b = (d.get("bucket_v3") or "").strip()
         if b in BUCKETS:
             grid[(d["pattern"], b)] += 1
 
@@ -310,9 +310,9 @@ def build_findings(decisions: list[dict]) -> Section:
     s = Section("SECTION 8 — HEADLINE FINDINGS", ["#", "finding"])
     counted = [d for d in decisions if is_counted(d)]
     late = sum(1 for d in counted
-               if (d.get("bucket_srd") or "") == "Correct but Late")
+               if (d.get("bucket_v3") or "") == "Correct but Late")
     unn = sum(1 for d in counted
-              if (d.get("bucket_srd") or "") == "Unnecessary")
+              if (d.get("bucket_v3") or "") == "Unnecessary")
     total = len(counted)
 
     s.add(1,

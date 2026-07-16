@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-classify_decisions_v3.py — Proposal-aligned classifier.
+classify_decisions_v3.py — PRIMARY classifier (proposal-aligned).
+
+As of the July 2026 audit this is the CANONICAL classifier for Chapter 4
+results. The earlier SRD-only classifier is preserved as
+classify_decisions_v2_srd_only.py for reference only. Do NOT run v2 as
+part of the primary pipeline.
 
 Implements the 2D SRD × SES classification matrix described in the
 research proposal document (Section 9, "Decision Classification"):

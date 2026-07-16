@@ -133,7 +133,7 @@ def load_decisions(path: Path) -> list[dict]:
             # classify_decisions_v2.py. If that column is missing (because
             # the v2 classifier hasn't been run), compute the same rule
             # inline as a fallback.
-            r["bucket"] = (r.get("bucket_srd") or srd_bucket(r))
+            r["bucket"] = (r.get("bucket_v3") or srd_bucket(r))
             rows.append(r)
     return rows
 
