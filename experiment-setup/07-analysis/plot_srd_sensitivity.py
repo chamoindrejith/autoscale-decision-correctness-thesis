@@ -404,7 +404,8 @@ def main() -> None:
             ax_col.set_ylabel("Number of decisions")
             ax_col.legend(loc="upper right", fontsize=8, framealpha=0.95)
 
-    fig.suptitle("SRD-Based Bucket Distribution — SLO Threshold Sensitivity",
+    fig.suptitle("Proposal-Aligned (SRD × SES) Bucket Distribution — "
+                 "SLO Threshold Sensitivity",
                  fontsize=12)
     plt.tight_layout()
     outpath = PLOTS_DIR / "bucket_sensitivity_by_threshold.png"

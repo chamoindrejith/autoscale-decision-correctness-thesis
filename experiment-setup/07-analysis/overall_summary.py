@@ -203,7 +203,7 @@ def build_decisions_per_pattern(decisions: list[dict]) -> Section:
 def build_bucket_distribution(decisions: list[dict]) -> Section:
     s = Section(
         f"SECTION 4 — BUCKET DISTRIBUTION AT {SLO_THRESHOLD_MS} ms SLO "
-        f"(SRD-based, counted only)",
+        f"(Proposal-aligned SRD × SES, counted only)",
         ["pattern",
          "Correct & Timely", "Correct but Late",
          "Unnecessary", "Ineffective", "total"],

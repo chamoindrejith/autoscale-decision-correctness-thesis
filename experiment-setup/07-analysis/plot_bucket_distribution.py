@@ -3,28 +3,30 @@
 plot_bucket_distribution.py — Bar chart of the 4-bucket correctness
 classification counts per workload pattern.
 
-Uses the SRD-based classification (methodology §2 + reviewer preference):
+Uses the proposal-aligned SRD × SES classification (per research
+proposal Section 9), applied by classify_decisions_v3.py:
 
-  Scale-UP decisions:
-    scaling_limited=True AND reason=TooManyReplicas → Ineffective
-    srd_source = "no_slo_breach"                    → Unnecessary
-    srd_seconds ≤ 0 (SRD ≤ 0)                       → Correct & Timely
-    srd_seconds > 0 (SRD > 0)                       → Correct but Late
+  Scale-UP decisions (evaluated in priority order):
+    srd_source = "no_slo_breach"                   → Unnecessary
+    ses is null                                    → Undefined
+    ses < -tau                                     → Ineffective
+    |ses| ≤ tau (near zero)                        → Unnecessary
+    ses > +tau AND srd ≤ 0                         → Correct & Timely
+    ses > +tau AND srd > 0                         → Correct but Late
 
-  Scale-DOWN decisions (SRD not meaningful for scale-downs):
-    scaling_limited=True AND reason=TooFewReplicas → Ineffective
-    otherwise                                       → Correct & Timely
-    (i.e. HPA is trusted for scale-down; a scale-down that later proved
-     premature would surface as a subsequent scale-up with SRD>0)
+  Scale-DOWN decisions:
+    otherwise                                      → Correct & Timely
+    (SES not applicable to scale-downs; a premature scale-down would
+     surface as a subsequent scale-up whose SRD > 0)
 
-The previous CPU-threshold classifier (30/60) was calibrated for the
-proposal-era HPA target of 30% CPU; with the 75% target used in this
-campaign, every scale-up sits above the 60% "Late" threshold and every
-scale-down's memory reading (~30-45% baseline) sits above the 30%
-"Unnecessary" threshold, so the two buckets it can populate become
-trivially predictable. The SRD-based classifier ties the "Late"
-designation to the actual SLO (p95 > 500 ms) rather than to a proxy
-CPU value — the definition Suvin's guidance points to in principle.
+where tau (SES_NEAR_ZERO_TAU) is the "near-zero" threshold for SES,
+default 0.05 — SES changes below 5 % treated as effectively no change.
+
+This is the CANONICAL classifier for Chapter 4 results. The earlier
+CPU-threshold classifier (30/60, calibrated for the pilot 30 % HPA
+target) and the SRD-only classifier (v2) are preserved only as legacy
+files (classify_decisions_v1_pilot.py, classify_decisions_v2_srd_only.py)
+and are not part of the primary pipeline.
 
 Produces two figures:
 
@@ -232,8 +234,8 @@ def main() -> None:
 
     fig.suptitle(
         "HPA Decision Correctness Buckets by Workload Pattern\n"
-        "(SRD-based classification: 'Late' means HPA fired after "
-        "p95 latency crossed the 500 ms SLO)",
+        "(Proposal-aligned SRD × SES classification: 'Late' = HPA fired "
+        "after the 500 ms SLO breach AND latency improved after scaling)",
         fontsize=12,
         y=1.03,
     )
@@ -252,7 +254,8 @@ def main() -> None:
         ax,
         counted_counts,
         f"HPA Decision Correctness Buckets by Workload Pattern "
-        f"(n = {len(counted_rows)} counted decisions; SRD-based classifier)",
+        f"(n = {len(counted_rows)} counted decisions; "
+        f"proposal-aligned SRD × SES classifier)",
     )
     ax.set_xlabel("Workload pattern")
     plt.tight_layout()
